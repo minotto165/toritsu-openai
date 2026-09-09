@@ -127,7 +127,7 @@ TORITSU_MODEL=13 bun run src/index.ts
 | `TORITSU_API_KEY` | Yes（どちらか） | 都立AIのAPIキー（直指定） |
 | `TORITSU_KEY_FILE` | Yes（どちらか） | APIキーが書かれたファイルのパス（ホットリロード対応、1時間ごとの貼り替えに再起動不要） |
 | `TORITSU_SESSION` | セッションモード用 | WebUIのセッショントークン（`--login` で保存したファイルよりenv優先） |
-| `TORITSU_MODEL` | セッションモード用 | `10`=高速、`13`=推論。未設定なら授業キー方式 |
+| `TORITSU_MODEL` | セッションモード用 | `10`=高速、`13`=推論。未設定・空・その他（例：`off`）なら授業キー方式。`.env` に値がある場合は起動時の環境変数が優先される |
 | `PORT` | No | 待受ポート（既定3000） |
 | `TORITSU_API_URL` | No | 上流URLの上書き（テスト用） |
 | `TORITSU_SYSTEM_FORMAT` | No | `a`（既定）または `b` |
