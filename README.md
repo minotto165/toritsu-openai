@@ -16,6 +16,14 @@ TORITSU_API_KEY="ここにAPIキー" bun run src/index.ts
 
 サーバーは `http://localhost:3000` で起動します（`PORT` 環境変数で変更可）。
 
+`.env` ファイルでも設定できます（Bunが自動で読込みます）。`.env.example` をコピーしてキーを貼ってください（`.env` はgit管理外です）。
+
+```sh
+cp .env.example .env
+# .env を編集して TORITSU_API_KEY にキーを貼る
+bun run src/index.ts
+```
+
 ### curl例
 
 ```sh
