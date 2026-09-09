@@ -146,3 +146,75 @@ export function toChatCompletion(model: string, data: ToritsuResponse): ChatComp
     conversation_id: typeof conversationId === "string" ? conversationId : "",
   };
 }
+
+export type ParsedOutput =
+  | { type: "tool_calls"; calls: Array<{ id: string; name: string; args: string }> }
+  | { type: "answer"; text: string };
+
+function tryParse(s: string): unknown | null {
+  try {
+    return JSON.parse(s) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function extractJson(text: string): unknown | null {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  const candidate = fenced !== null ? fenced[1] : text;
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    return null;
+  }
+  const sliced = candidate.slice(start, end + 1);
+  // モデルが文字列内に生の改行等を混ぜた不正JSONを返すことがあるため、
+  // 厳密パース失敗時は制御文字をエスケープして再試行する
+  return (
+    tryParse(sliced) ??
+    tryParse(sliced.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t"))
+  );
+}
+
+/**
+ * モデルのテキスト応答を tool_calls / 最終回答に振り分ける。
+ */
+export function parseAssistantOutput(text: string): ParsedOutput {
+  const obj = extractJson(text);
+  if (obj !== null && typeof obj === "object") {
+    const calls = (obj as { tool_calls?: unknown }).tool_calls;
+    if (Array.isArray(calls) && calls.length > 0) {
+      const now = Date.now();
+      return {
+        type: "tool_calls",
+        calls: calls.map((c: unknown, i: number) => {
+          const item = (c ?? {}) as { id?: unknown; name?: unknown; arguments?: unknown };
+          const args = item.arguments;
+          return {
+            id: typeof item.id === "string" ? item.id : `call_${now}_${i}`,
+            name: typeof item.name === "string" ? item.name : "unknown",
+            args: typeof args === "string" ? args : JSON.stringify(args ?? {}),
+          };
+        }),
+      };
+    }
+    const answer = (obj as { answer?: unknown }).answer;
+    if (typeof answer === "string") {
+      return { type: "answer", text: answer };
+    }
+  }
+  // 不正JSON救済：{"answer": "..."} の形だけ寛容に抜き出す
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("```")) {
+    const m = text.match(/"answer"\s*:\s*"([\s\S]*)"\s*\}\s*(```\s*)?$/);
+    if (m !== null && m[1] !== undefined) {
+      const unescaped = m[1]
+        .replace(/\\"/g, '"')
+        .replace(/\\n/g, "\n")
+        .replace(/\\r/g, "\r")
+        .replace(/\\t/g, "\t");
+      return { type: "answer", text: unescaped };
+    }
+  }
+  return { type: "answer", text };
+}

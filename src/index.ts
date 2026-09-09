@@ -68,6 +68,8 @@ app.post("/v1/chat/completions", async (c) => {
     messages?: unknown;
     stream?: unknown;
     conversation_id?: unknown;
+    tools?: unknown;
+    tool_choice?: unknown;
   } | null;
 
   if (body === null || !Array.isArray(body.messages) || body.messages.length === 0) {
@@ -80,10 +82,15 @@ app.post("/v1/chat/completions", async (c) => {
     stream: body.stream === true,
     conversationId: typeof body.conversation_id === "string" ? body.conversation_id : "",
   };
+  const tools = Array.isArray(body.tools) ? (body.tools as unknown[]) : [];
 
   try {
     if (model === AGENT_MODEL) {
-      return await handleAgentChat(req);
+      // toolsなし・tool_choice none のエージェント要求は通常チャットに格下げする
+      if (tools.length === 0 || body.tool_choice === "none") {
+        return await handlePublicChat(req);
+      }
+      return await handleAgentChat(req, tools);
     }
     const webuiModel = WEBUI_MODELS[model as keyof typeof WEBUI_MODELS];
     if (webuiModel !== undefined) {

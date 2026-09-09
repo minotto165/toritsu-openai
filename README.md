@@ -92,7 +92,7 @@ TORITSU_KEY_FILE=~/.config/toritsu-openai/key bun run src/index.ts
 | `toritsu` | 通常チャット（公開Endpoint） | 授業キー |
 | `toritsu-fast` | 高速モデル（WebUI方式） | ログイン（`--login`） |
 | `toritsu-reasoning` | 推論モデル（WebUI方式） | ログイン（`--login`） |
-| `toritsu-agent` | エージェントループ（公開Endpoint・BASH/READ実行） | 授業キー |
+| `toritsu-agent` | エージェント翻訳（公開Endpoint・tool_calls中継） | 授業キー |
 
 ```sh
 # WebUIモデルを使う場合の事前準備（1回だけ）
@@ -107,17 +107,18 @@ WebUIモデルでは `conversation_id` にWebUIの会話ID（`hid`）が入り�
 
 ## エージェントモード（`toritsu-agent` モデル）
 
-`model` に `toritsu-agent` を指定すると、プロキシ側でコマンド実行を伴う往復ループが動きます（BASH/READ）。`pi` 等のエージェントから実ディレクトリ参照が可能です。
+`model` に `toritsu-agent` を指定すると、プロキシは「翻訳者」として振る舞います。クライアントの `tools` 定義をテキスト指示に変換し、モデルが出した `tool_calls` JSON をそのままクライアントに返します。**実行はクライアント側（pi等）が担い**、結果を受けて次の往復に進みます。
 
 ```sh
-TORITSU_AGENT_CWD=/Users/minotto/dev/toritsu-openai bun run src/index.ts
+bun run src/index.ts
 pi -p "現在のディレクトリの内容をまとめて" --provider toritsu --model toritsu-agent
 ```
 
-- 実行ディレクトリは `TORITSU_AGENT_CWD`（既定は起動ディレクトリ）です。素の `ls -la` はそこが読まれます。`READ` はこの配下に限定されますが、`BASH` は絶対パスで配下外も触れます。BASHはtimeout 30秒・出力8000文字cap
-- 1タスクで上流呼び出しが数回発生します（クォータ消費に注意、最大5往復）
+- `tools` なし・`tool_choice: none` の要求は通常チャットに格下げされます
+- 反復はクライアント側が駆動します（プロキシは1往復ごとに応答）
+- クライアントの `system` は除外されます（API提供ツール前提の記述が指示と矛盾するため）
 
-> ⚠️ 注意：あなたの権限でコマンドが実行されます。サーバーを外部公開した状態での使用は危険です。ローカル利用に限ってください。
+> ⚠️ 注意：クライアントの権限でコマンドが実行されます。サーバーを外部公開した状態での使用は危険です。ローカル利用に限ってください。
 
 ## 環境変数
 
@@ -126,7 +127,6 @@ pi -p "現在のディレクトリの内容をまとめて" --provider toritsu -
 | `TORITSU_API_KEY` | Yes（どちらか） | 都立AIのAPIキー（直指定） |
 | `TORITSU_KEY_FILE` | Yes（どちらか） | APIキーが書かれたファイルのパス（ホットリロード対応、1時間ごとの貼り替えに再起動不要） |
 | `TORITSU_SESSION` | WebUIモデル用 | WebUIのセッショントークン（`--login` で保存したファイルよりenv優先） |
-| `TORITSU_AGENT_CWD` | エージェント用 | 実行範囲ディレクトリ（既定は起動ディレクトリ） |
 | `PORT` | No | 待受ポート（既定3000） |
 | `TORITSU_API_URL` | No | 上流URLの上書き（テスト用） |
 | `TORITSU_SYSTEM_FORMAT` | No | `a`（既定）または `b` |
