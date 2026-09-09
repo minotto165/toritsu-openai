@@ -66,7 +66,7 @@ print(second.choices[0].message.content)
 
 ## システムプロンプトの扱い
 
-都立AI側にsystem枠がないため、`system` roleのメッセージは文頭にまとめて文字列に畳み込んで送ります（形式A：`system: ...` 行として先頭配置）。環境変数 `TORITSU_SYSTEM_FORMAT=b` で形式B（`【システム指示】` ヘッダー化）に切替えできます。
+都立AI側にsystem枠がないため、`system` roleのメッセージは文頭に `system: ...` 行として配置して送ります（live検証で効果を確認済み）。環境変数 `TORITSU_SYSTEM_FORMAT=b` で形式B（`【システム指示】` ヘッダー化）にも切替えできます（効果は同等確認済み）。
 
 ## 1時間ごとのキー貼り替え
 
@@ -97,5 +97,6 @@ TORITSU_KEY_FILE=~/.config/toritsu-openai/key bun run src/index.ts
 
 - 対応エンドポイントは `POST /v1/chat/completions`（非ストリーミング）のみです。`stream: true` は400で拒否します。
 - `/v1/models`・画像生成・responses APIには対応していません。
-- `usage` のトークン数は上流が返さないためゼロ埋めです。
+- `usage` のトークン数は上流の実測値をマッピングしています。
 - `model` は任意の文字列を受け付け、そのまま応答にエコーします。
+- 上流の裏側は Azure OpenAI 系のモデルが動いていますが、function calling等のツール利用は公開エンドポイント経由では使えません（余分なフィールドを送ると上流が拒否します）。

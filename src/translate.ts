@@ -37,6 +37,11 @@ export interface ToritsuResponse {
     conversation?: {
       id?: unknown;
     };
+    usage?: {
+      input_tokens?: unknown;
+      output_tokens?: unknown;
+      total_tokens?: unknown;
+    };
   };
   error?: unknown;
 }
@@ -65,7 +70,7 @@ export interface ChatCompletion {
     message: { role: "assistant"; content: string };
     finish_reason: "stop";
   }>;
-  /** 上流がトークン数を返さないためゼロ埋め */
+  /** 上流がトークン数を返すため実測値をマッピング（欠落時のみゼロ） */
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
   /** 非標準の付加フィールド：上流の conversation.id をそのまま返す */
   conversation_id: string;
@@ -74,6 +79,8 @@ export interface ChatCompletion {
 /** 都立AIの応答を OpenAI chat.completion 形式に変換する */
 export function toChatCompletion(model: string, data: ToritsuResponse): ChatCompletion {
   const conversationId = data.response?.conversation?.id;
+  const upstreamUsage = data.response?.usage;
+  const num = (v: unknown): number => (typeof v === "number" ? v : 0);
   const now = Date.now();
   return {
     id: `chatcmpl-toritsu-${now}`,
@@ -87,7 +94,11 @@ export function toChatCompletion(model: string, data: ToritsuResponse): ChatComp
         finish_reason: "stop",
       },
     ],
-    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    usage: {
+      prompt_tokens: num(upstreamUsage?.input_tokens),
+      completion_tokens: num(upstreamUsage?.output_tokens),
+      total_tokens: num(upstreamUsage?.total_tokens),
+    },
     conversation_id: typeof conversationId === "string" ? conversationId : "",
   };
 }

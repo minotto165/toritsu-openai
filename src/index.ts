@@ -98,9 +98,13 @@ app.post("/v1/chat/completions", async (c) => {
     upstream = await fetch(TORITSU_API_URL, {
       method: "POST",
       headers: {
+        // 上流は Accept-Encoding なしのリクエストを401で拒否するため必須
+        Accept: "application/json",
+        "Accept-Encoding": "gzip, deflate",
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
+      // 上流は {input, conversation_id} 以外のトップレベル field を401で拒否するため厳密にこの2つのみ送る
       body: JSON.stringify({ input, conversation_id: conversationId }),
       signal: AbortSignal.timeout(60_000),
     });
