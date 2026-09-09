@@ -5,6 +5,7 @@ import {
   toChatCompletion,
   upstreamErrorMessage,
   type ChatMessage,
+  type ChatCompletion,
   type SystemFormat,
 } from "./translate";
 
@@ -66,6 +67,48 @@ function invalidRequest(message: string): Response {
   return json({ error: { message, type: "invalid_request_error" } }, 400);
 }
 
+/**
+ * 疑似SSE：上流は一括応答のみのため、全文をチャンク分割して
+ * OpenAI形式の chat.completion.chunk ストリームとして返す。
+ */
+function toSSE(completion: ChatCompletion): Response {
+  const content = completion.choices[0]?.message.content ?? "";
+  const SIZE = 60;
+  const chunks: string[] = [];
+  for (let i = 0; i < content.length; i += SIZE) {
+    chunks.push(content.slice(i, i + SIZE));
+  }
+  if (chunks.length === 0) {
+    chunks.push("");
+  }
+  const base = {
+    id: completion.id,
+    object: "chat.completion.chunk",
+    created: completion.created,
+    model: completion.model,
+  };
+  let body = "";
+  for (const text of chunks) {
+    body += `data: ${JSON.stringify({
+      ...base,
+      choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
+    })}\n\n`;
+  }
+  body += `data: ${JSON.stringify({
+    ...base,
+    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+  })}\n\n`;
+  body += "data: [DONE]\n\n";
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+}
+
 app.post("/v1/chat/completions", async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
     model?: unknown;
@@ -77,9 +120,7 @@ app.post("/v1/chat/completions", async (c) => {
   if (body === null || !Array.isArray(body.messages) || body.messages.length === 0) {
     return invalidRequest("messages is required");
   }
-  if (body.stream === true) {
-    return invalidRequest("stream is not supported in v1");
-  }
+  const stream = body.stream === true;
 
   const apiKey = getApiKey();
   if (!apiKey) {
@@ -142,7 +183,11 @@ app.post("/v1/chat/completions", async (c) => {
   }
 
   const model = typeof body.model === "string" ? body.model : "toritsu-ai";
-  return c.json(toChatCompletion(model, data));
+  const completion = toChatCompletion(model, data);
+  if (stream) {
+    return toSSE(completion);
+  }
+  return c.json(completion);
 });
 
 export default {

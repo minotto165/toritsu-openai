@@ -95,7 +95,9 @@ TORITSU_KEY_FILE=~/.config/toritsu-openai/key bun run src/index.ts
 
 ## 制約
 
-- 対応エンドポイントは `POST /v1/chat/completions`（非ストリーミング）のみです。`stream: true` は400で拒否します。
+- 対応エンドポイントは `POST /v1/chat/completions` のみです。
+- `stream: true` には疑似ストリーミングで応答します（上流は一括応答のため、全文を分割してSSE形式で配信）。
+- 上流の `input` は20000文字以下です。これを超えると400エラーになります。
 - `/v1/models`・画像生成・responses APIには対応していません。
 - `usage` のトークン数は上流の実測値をマッピングしています。
 - `model` は任意の文字列を受け付け、そのまま応答にエコーします。

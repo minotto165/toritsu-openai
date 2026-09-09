@@ -44,6 +44,8 @@ export interface ToritsuResponse {
     };
   };
   error?: unknown;
+  /** バリデーションエラー時の形状 {errors:{field:[msg]}} */
+  errors?: Record<string, unknown>;
 }
 
 /** 上流エラー応答から表示用メッセージを抜き出す */
@@ -56,6 +58,16 @@ export function upstreamErrorMessage(data: ToritsuResponse | null): string {
   }
   if (typeof data.error === "string" && data.error.length > 0) {
     return data.error;
+  }
+  if (data.errors !== undefined && data.errors !== null && typeof data.errors === "object") {
+    for (const v of Object.values(data.errors)) {
+      const items = Array.isArray(v) ? v : [v];
+      for (const item of items) {
+        if (typeof item === "string" && item.length > 0) {
+          return item;
+        }
+      }
+    }
   }
   return "upstream error";
 }
