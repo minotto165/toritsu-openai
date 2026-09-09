@@ -14,6 +14,20 @@ import {
 
 export const AGENT_MODEL = "toritsu-agent";
 
+/** 入力上限対策：先頭（規約文）を残し、古い履歴側を削る */
+const INPUT_BUDGET = 18000;
+const HEAD_KEEP = 2000;
+
+export function shrinkInput(input: string): string {
+  if (input.length <= INPUT_BUDGET) {
+    return input;
+  }
+  return (
+    `${input.slice(0, HEAD_KEEP)}\n...[omitted ${input.length - INPUT_BUDGET} chars of older tool output]...\n` +
+    input.slice(input.length - (INPUT_BUDGET - HEAD_KEEP))
+  );
+}
+
 /** クライアントの tools 定義をそのまま埋め込んだ指示文を作る */
 export function agentToolPreamble(tools: unknown[]): string {
   const defs = tools.map((t, i) => {
@@ -59,7 +73,7 @@ export async function handleAgentChat(
   // クライアントのsystemは捨てる：API提供ツール前提の記述が
   // テキスト指示と矛盾し、モデルが実行を拒む原因になるため
   const messages = req.messages.filter((m) => m.role !== "system");
-  const input = toToritsuInput(messages, SYSTEM_FORMAT, preamble);
+  const input = shrinkInput(toToritsuInput(messages, SYSTEM_FORMAT, preamble));
 
   const sendOnce = async (): Promise<{
     text: string;
