@@ -83,12 +83,35 @@ TORITSU_KEY_FILE=~/.config/toritsu-openai/key bun run src/index.ts
 
 サーバーログにキー末尾4文字のフィンガープリントが出力されるので、どの世代で動いているか確認できます。上流から401が返ると `key may be expired, refresh KEY_FILE` のヒントがログに出ます。
 
+## モデル選択（セッションモード・任意）
+
+既定では授業APIキー方式（単一モデル）で動作します。WebUIと同じ推論モデル（`13`）・高速モデル（`10`）を使いたい場合は、学校セッションを使うセッションモードに切替えます。
+
+```sh
+# 1. ログイン（ブラウザが開くので都立AIにログインし、指示に従いトークンを貼付け）
+bun run src/index.ts --login
+# 2. モデル指定で起動
+TORITSU_MODEL=13 bun run src/index.ts
+```
+
+| `TORITSU_MODEL` | 意味 |
+| --- | --- |
+| 未設定 | 授業キー方式（既定） |
+| `10` | 高速モデル（セッション方式） |
+| `13` | 推論モデル（セッション方式） |
+
+セッションモードでは `conversation_id` にWebUIの会話ID（`hid`）が入ります。授業キー方式のIDとは互換がありません。
+
+> ⚠️ 注意：セッショントークンは学校アカウント全体へのアクセスに繋がります。`~/.config/toritsu-openai/session`（パーミッション0600）にのみ保存し、他人と共有しないでください。ログ・報告・gitのいずれにも含めないでください。
+
 ## 環境変数
 
 | 変数 | 必須 | 説明 |
 | --- | --- | --- |
 | `TORITSU_API_KEY` | Yes（どちらか） | 都立AIのAPIキー（直指定） |
 | `TORITSU_KEY_FILE` | Yes（どちらか） | APIキーが書かれたファイルのパス（ホットリロード対応、1時間ごとの貼り替えに再起動不要） |
+| `TORITSU_SESSION` | セッションモード用 | WebUIのセッショントークン（`--login` で保存したファイルよりenv優先） |
+| `TORITSU_MODEL` | セッションモード用 | `10`=高速、`13`=推論。未設定なら授業キー方式 |
 | `PORT` | No | 待受ポート（既定3000） |
 | `TORITSU_API_URL` | No | 上流URLの上書き（テスト用） |
 | `TORITSU_SYSTEM_FORMAT` | No | `a`（既定）または `b` |

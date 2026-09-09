@@ -12,11 +12,69 @@ import {
   type ToolDef,
 } from "./translate";
 
+import {
+  loadSessionToken,
+  saveSessionToken,
+  resolveSessionModel,
+  checkSession,
+  sendSessionMessage,
+} from "./session";
+
 const TORITSU_API_URL =
   process.env.TORITSU_API_URL ?? "https://ai-api.metro.tokyo.lg.jp/api/v1/public/message";
 const PORT = Number(process.env.PORT ?? "3000");
 const SYSTEM_FORMAT: SystemFormat = process.env.TORITSU_SYSTEM_FORMAT === "b" ? "b" : "a";
 const KEY_FILE = process.env.TORITSU_KEY_FILE;
+const SESSION_MODEL = resolveSessionModel();
+
+if (process.argv.includes("--login")) {
+  await runLogin();
+  process.exit(0);
+}
+
+/**
+ * セッションログイン：既定ブラウザで都立AIを開き、
+ * ユーザーが貼り付けたセッショントークンを検証・保存する。
+ * 学校アカウントの認証情報自体は扱わない。
+ */
+async function runLogin(): Promise<void> {
+  console.log("=== toritsu-openai session login ===");
+  console.log("注意: 保存されるのは都立AIのセッショントークンです。");
+  console.log("学校アカウント全体へのアクセスに繋がるため、他人と共有しないでください。");
+  console.log("");
+  console.log("1. ブラウザで都立AIにログインしてください（自動で開きます）。");
+  console.log("2. DevTools → Network で api/v1/chat/ へのリクエストを探します。");
+  console.log('3. Request Headers の authorization の値（"Bearer " を除いた部分）を貼り付けます。');
+  console.log("");
+  try {
+    const proc = Bun.spawn(["open", "https://ai.metro.tokyo.lg.jp/"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    proc.exited.then(() => undefined).catch(() => undefined);
+  } catch {
+    console.log("(ブラウザを自動で開けませんでした。手動で開いてください)");
+  }
+  const { createInterface } = await import("node:readline/promises");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  let token = "";
+  try {
+    token = (await rl.question("session token: ")).trim();
+  } finally {
+    rl.close();
+  }
+  if (token === "") {
+    console.error("empty token");
+    process.exit(1);
+  }
+  console.log("validating...");
+  if (!(await checkSession(token))) {
+    console.error("invalid or expired session token");
+    process.exit(1);
+  }
+  saveSessionToken(token);
+  console.log("saved. Restart the server with TORITSU_MODEL=10 (高速) or TORITSU_MODEL=13 (推論).");
+}
 
 let currentApiKey = process.env.TORITSU_API_KEY ?? "";
 let keyFingerprint = currentApiKey ? currentApiKey.slice(-4) : "";
@@ -31,7 +89,7 @@ if (KEY_FILE) {
   }
 
   try {
-    const watcher = watch(KEY_FILE, (eventType) => {
+    const watcher = watch(KEY_FILE, (eventType: string) => {
       if (eventType === "change") {
         try {
           const newKey = readFileSync(KEY_FILE, "utf-8").trim();
@@ -45,7 +103,7 @@ if (KEY_FILE) {
         }
       }
     });
-    watcher.on("error", (err) => {
+    watcher.on("error", (err: Error) => {
       console.error(`[toritsu-openai] key file watcher error: ${err}`);
     });
   } catch (err) {
@@ -170,6 +228,51 @@ app.post("/v1/chat/completions", async (c) => {
 
   const conversationId =
     typeof body.conversation_id === "string" ? body.conversation_id : "";
+  const model = typeof body.model === "string" ? body.model : "toritsu-ai";
+
+  // セッションモード：TORITSU_MODEL=10/13 のときはWebUIと同じ
+  // セッションEndpointを使い、モデルを選択する。授業キーは使わない。
+  if (SESSION_MODEL !== null) {
+    const token = loadSessionToken();
+    if (token === "") {
+      return json(
+        {
+          error: {
+            message: "session mode requires login — run with --login",
+            type: "server_error",
+          },
+        },
+        500,
+      );
+    }
+    try {
+      const result = await sendSessionMessage({
+        input: toToritsuInput(body.messages as ChatMessage[], SYSTEM_FORMAT),
+        hid: conversationId,
+        model: SESSION_MODEL,
+        token,
+      });
+      const completion = toChatCompletion(model, {
+        message: result.content,
+        response: { conversation: { id: result.hid } },
+      });
+      if (stream) {
+        return toSSE(completion);
+      }
+      return c.json(completion);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "session error";
+      const expired = msg.startsWith("session expired");
+      if (expired) {
+        console.error("[toritsu-openai] session expired — run with --login");
+      }
+      return json(
+        { error: { message: msg, type: expired ? "authentication_error" : "toritsu_api_error" } },
+        expired ? 401 : 502,
+      );
+    }
+  }
+
   const extraSystem = useTools ? buildToolsInstruction(tools, body.tool_choice) : undefined;
   const input = toToritsuInput(body.messages as ChatMessage[], SYSTEM_FORMAT, extraSystem);
 
@@ -221,7 +324,6 @@ app.post("/v1/chat/completions", async (c) => {
     );
   }
 
-  const model = typeof body.model === "string" ? body.model : "toritsu-ai";
   const completion = toChatCompletion(model, data);
   if (useTools) {
     const raw = completion.choices[0]?.message.content ?? "";
