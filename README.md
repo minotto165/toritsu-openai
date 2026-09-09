@@ -1,6 +1,7 @@
 # toritsu-openai
 
 Tool Callingやその他の機能を追加した、都立AIのOpenAI互換ラッパーAPI
+
 Bun + Hono + TypeScriptで作成
 
 ## 前提
