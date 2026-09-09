@@ -132,13 +132,24 @@ export async function sendWebuiMessage(opts: {
       signal: AbortSignal.timeout(120_000),
     });
   } catch {
-    throw new Error("upstream unreachable");
+    throw new UpstreamError(502, "upstream unreachable", "upstream_unreachable");
   }
   if (!res.ok) {
     if (res.status === 401) {
-      throw new Error("session expired — run with --login to re-authenticate");
+      console.error("[toritsu-openai] session expired — run with --login");
+      throw new UpstreamError(
+        401,
+        "session expired — run with --login to re-authenticate",
+        "authentication_error",
+      );
     }
-    throw new Error(`session upstream error: ${res.status}`);
+    const bodyText = (await res.text().catch(() => "")).slice(0, 300);
+    throw new UpstreamError(
+      res.status,
+      bodyText !== "" ? bodyText : `session upstream error: ${res.status}`,
+      "toritsu_api_error",
+      res.status,
+    );
   }
   const data = (await res.json().catch(() => null)) as unknown;
   return adaptSessionResponse(data);
