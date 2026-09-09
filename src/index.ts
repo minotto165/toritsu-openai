@@ -335,7 +335,8 @@ app.post("/v1/chat/completions", async (c) => {
   const useTools = tools.length > 0 && body.tool_choice !== "none";
 
   const apiKey = getApiKey();
-  if (!apiKey) {
+  // 公開Endpointを使う場合のみ授業キー必須。セッション系は不要。
+  if (SESSION_MODEL === null && !apiKey) {
     return json(
       { error: { message: "TORITSU_API_KEY or TORITSU_KEY_FILE is not set", type: "server_error" } },
       500,
@@ -345,6 +346,41 @@ app.post("/v1/chat/completions", async (c) => {
   const conversationId =
     typeof body.conversation_id === "string" ? body.conversation_id : "";
   const model = typeof body.model === "string" ? body.model : "toritsu-ai";
+
+  // エージェントモード：モデル名 toritsu-agent で有効。BASH/READ をプロキシ側で実行する。
+  // 公開Endpoint専用。TORITSU_MODEL=10/13 との併用は409で明示的に拒否する
+  // （セッション経路ではモデルが実行要求に応じないことを実測確認済み）。
+  // クライアントの tools は無視する。
+  // ※セッション分岐より前で判定すること（黙殺防止）。
+  if (model === AGENT_MODEL) {
+    if (SESSION_MODEL !== null) {
+      return json(
+        {
+          error: {
+            message: "agent mode requires the public endpoint — unset TORITSU_MODEL",
+            type: "invalid_request_error",
+          },
+        },
+        409,
+      );
+    }
+    try {
+      const completion = await runAgentLoop(
+        body.messages as ChatMessage[],
+        conversationId,
+        apiKey,
+      );
+      if (stream) {
+        return toSSE(completion);
+      }
+      return c.json(completion);
+    } catch (err) {
+      if (err instanceof UpstreamError) {
+        return toErrorJson(err);
+      }
+      throw err;
+    }
+  }
 
   // セッションモード：TORITSU_MODEL=10/13 のときはWebUIと同じ
   // セッションEndpointを使い、モデルを選択する。授業キーは使わない。
@@ -391,27 +427,6 @@ app.post("/v1/chat/completions", async (c) => {
 
   const extraSystem = useTools ? buildToolsInstruction(tools, body.tool_choice) : undefined;
   const input = toToritsuInput(body.messages as ChatMessage[], SYSTEM_FORMAT, extraSystem);
-
-  // エージェントモード：モデル名 toritsu-agent で有効。BASH/READ をプロキシ側で実行する。
-  // セッションモードとの併用不可（公開Endpointを使用）。クライアントの tools は無視する。
-  if (model === AGENT_MODEL) {
-    try {
-      const completion = await runAgentLoop(
-        body.messages as ChatMessage[],
-        conversationId,
-        apiKey,
-      );
-      if (stream) {
-        return toSSE(completion);
-      }
-      return c.json(completion);
-    } catch (err) {
-      if (err instanceof UpstreamError) {
-        return toErrorJson(err);
-      }
-      throw err;
-    }
-  }
 
   let pub: PublicResult;
   try {
