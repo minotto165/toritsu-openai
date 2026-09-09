@@ -2,9 +2,9 @@ import { Hono } from "hono";
 import { PORT } from "./config";
 import { invalidRequest, toErrorJson, UpstreamError, type ChatRequest } from "./http";
 import { handlePublicChat } from "./public";
-import { handleSessionChat, SESSION_MODELS } from "./session";
+import { handleWebuiChat, WEBUI_MODELS } from "./webui";
 import { handleAgentChat, AGENT_MODEL } from "./agent";
-import { checkSession, saveSessionToken } from "./session";
+import { checkSession, saveSessionToken } from "./webui";
 import type { ChatMessage } from "./translate";
 
 if (process.argv.includes("--login")) {
@@ -85,9 +85,9 @@ app.post("/v1/chat/completions", async (c) => {
     if (model === AGENT_MODEL) {
       return await handleAgentChat(req);
     }
-    const sessionModel = SESSION_MODELS[model as keyof typeof SESSION_MODELS];
-    if (sessionModel !== undefined) {
-      return await handleSessionChat(req, sessionModel);
+    const webuiModel = WEBUI_MODELS[model as keyof typeof WEBUI_MODELS];
+    if (webuiModel !== undefined) {
+      return await handleWebuiChat(req, webuiModel);
     }
     return await handlePublicChat(req);
   } catch (err) {

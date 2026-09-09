@@ -1,5 +1,5 @@
 import { chromium } from "playwright-core";
-import { checkSession, saveSessionToken } from "./session";
+import { checkSession, saveSessionToken } from "./webui";
 
 const LOGIN_URL = "https://ai.metro.tokyo.lg.jp/";
 const TOKEN_KEY = "auth._token.local";
@@ -41,7 +41,7 @@ export async function autoLogin(): Promise<boolean> {
         console.log("トークンを検出。検証中...");
         if (await checkSession(token)) {
           saveSessionToken(token);
-          console.log("saved. Restart the server with TORITSU_MODEL=10 (高速) or TORITSU_MODEL=13 (推論).");
+          console.log("saved. Use model toritsu-fast (高速) or toritsu-reasoning (推論).");
           return true;
         }
         console.log("トークンが無効でした。ログインし直してください。");

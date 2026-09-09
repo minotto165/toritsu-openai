@@ -5,9 +5,9 @@ import { SYSTEM_FORMAT } from "./config";
 import { json, toSSE, UpstreamError, type ChatRequest } from "./http";
 import { toToritsuInput, toChatCompletion } from "./translate";
 
-export const SESSION_API_URL =
+export const WEBUI_API_URL =
   "https://ai-api.metro.tokyo.lg.jp/api/v1/chat/message";
-const SESSION_STATUS_URL =
+const WEBUI_STATUS_URL =
   "https://ai-api.metro.tokyo.lg.jp/api/v1/chat/tool/status";
 const CONFIG_DIR = join(homedir(), ".config", "toritsu-openai");
 const SESSION_FILE = join(CONFIG_DIR, "session");
@@ -32,7 +32,7 @@ export function saveSessionToken(token: string): void {
 }
 
 /** モデル名 → WebUIのモデルID。ここにない名前は通常チャット扱い */
-export const SESSION_MODELS = {
+export const WEBUI_MODELS = {
   "toritsu-fast": "10",
   "toritsu-reasoning": "13",
 } as const;
@@ -40,7 +40,7 @@ export const SESSION_MODELS = {
 /** tool/status へのGETでセッション有効性を確認する（クォータ非消費） */
 export async function checkSession(token: string): Promise<boolean> {
   try {
-    const res = await fetch(SESSION_STATUS_URL, {
+    const res = await fetch(WEBUI_STATUS_URL, {
       headers: {
         Accept: "application/json",
         "Accept-Encoding": "gzip, deflate",
@@ -59,8 +59,8 @@ export interface SessionResult {
   hid: string;
 }
 
-/** セッションチャット：WebUIと同じセッションEndpointを使う */
-export async function handleSessionChat(
+/** セッションチャット：WebUIと同じWebUI Endpointを使う */
+export async function handleWebuiChat(
   req: ChatRequest,
   sessionModel: string,
 ): Promise<Response> {
@@ -69,7 +69,7 @@ export async function handleSessionChat(
     throw new UpstreamError(500, "session mode requires login — run with --login", "server_error");
   }
   try {
-    const result = await sendSessionMessage({
+    const result = await sendWebuiMessage({
       input: toToritsuInput(req.messages, SYSTEM_FORMAT),
       hid: req.conversationId,
       model: sessionModel,
@@ -101,11 +101,11 @@ export function adaptSessionResponse(data: unknown): SessionResult {
 }
 
 /**
- * セッションEndpointへ送信する。ボディはWebUIと同一のmultipart形式。
+ * WebUI Endpointへ送信する。ボディはWebUIと同一のmultipart形式。
  * 公開Endpointと異なり {input, conversation_id} ではなく
  * message[content]/id/is_stream/model/tool_choice を送る。
  */
-export async function sendSessionMessage(opts: {
+export async function sendWebuiMessage(opts: {
   input: string;
   hid: string;
   model: string;
@@ -121,7 +121,7 @@ export async function sendSessionMessage(opts: {
   form.append("tool_choice", "1");
   let res: Response;
   try {
-    res = await fetch(SESSION_API_URL, {
+    res = await fetch(WEBUI_API_URL, {
       method: "POST",
       headers: {
         Accept: "application/json",
