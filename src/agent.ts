@@ -5,6 +5,7 @@
 import { SYSTEM_FORMAT, getApiKey } from "./config";
 import { json, toSSE, UpstreamError, type ChatRequest } from "./http";
 import { callPublicUpstream } from "./public";
+import { loadSessionToken, sendWebuiMessage, WEBUI_MODELS } from "./webui";
 import {
   toToritsuInput,
   toChatCompletion,
@@ -40,21 +41,15 @@ export function agentResultPreamble(): string {
 }
 
 /**
- * エージェントチャット：1往復ごとに tool_calls または回答を返す。
- * 反復はクライアント側が駆動する（tool実行→結果送信→次往復）。
+ * エージェントチャット：tools定義をテキスト指示に変換し、モデルが出した
+ * tool_calls JSON をそのまま返す。呼出しが出なければ直接回答として返す。
+ * モデル名で送信先を決める：webuiモデルはセッションEndpoint、それ以外は公開Endpoint。
  */
 export async function handleAgentChat(
   req: ChatRequest,
   tools: unknown[],
 ): Promise<Response> {
-  const apiKey = getApiKey();
-  if (!apiKey) {
-    throw new UpstreamError(
-      500,
-      "TORITSU_API_KEY or TORITSU_KEY_FILE is not set",
-      "server_error",
-    );
-  }
+  const webuiModel = WEBUI_MODELS[req.model as keyof typeof WEBUI_MODELS];
   // 結果ターン（role:tool あり）では回答許可の指示に切替える。
   // そうしないと呼出しを繰返し、最終回答に到達しない
   const hasResults = req.messages.some((m) => m.role === "tool");
@@ -63,12 +58,43 @@ export async function handleAgentChat(
   // テキスト指示と矛盾し、モデルが実行を拒む原因になるため
   const messages = req.messages.filter((m) => m.role !== "system");
   const input = toToritsuInput(messages, SYSTEM_FORMAT, preamble);
-  const res = await callPublicUpstream(input, req.conversationId, apiKey);
-  const parsed = parseAssistantOutput(res.message);
+
+  let text: string;
+  let cid: string;
+  let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+  if (webuiModel !== undefined) {
+    const token = loadSessionToken();
+    if (token === "") {
+      throw new UpstreamError(500, "session mode requires login — run with --login", "server_error");
+    }
+    const r = await sendWebuiMessage({ input, hid: req.conversationId, model: webuiModel, token });
+    text = r.content;
+    cid = r.hid;
+  } else {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      throw new UpstreamError(
+        500,
+        "TORITSU_API_KEY or TORITSU_KEY_FILE is not set",
+        "server_error",
+      );
+    }
+    const r = await callPublicUpstream(input, req.conversationId, apiKey);
+    text = r.message;
+    cid = r.conversationId;
+    const u = r.data.response?.usage;
+    const num = (v: unknown): number => (typeof v === "number" ? v : 0);
+    usage = {
+      prompt_tokens: num(u?.input_tokens),
+      completion_tokens: num(u?.output_tokens),
+      total_tokens: num(u?.total_tokens),
+    };
+  }
+  const parsed = parseAssistantOutput(text);
   if (parsed.type === "tool_calls") {
     const completion = toChatCompletion(req.model, {
       message: "",
-      response: { conversation: { id: res.conversationId } },
+      response: { conversation: { id: cid } },
     });
     const choice = completion.choices[0];
     if (choice !== undefined) {
@@ -80,11 +106,13 @@ export async function handleAgentChat(
       }));
       choice.finish_reason = "tool_calls";
     }
+    completion.usage = usage;
     return req.stream ? toSSE(completion) : json(completion, 200);
   }
   const completion = toChatCompletion(req.model, {
     message: parsed.text,
-    response: { conversation: { id: res.conversationId } },
+    response: { conversation: { id: cid } },
   });
+  completion.usage = usage;
   return req.stream ? toSSE(completion) : json(completion, 200);
 }

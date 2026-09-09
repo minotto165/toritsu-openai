@@ -107,7 +107,7 @@ WebUIモデルでは `conversation_id` にWebUIの会話ID（`hid`）が入り�
 
 ## エージェントモード（`toritsu-agent` モデル）
 
-`model` に `toritsu-agent` を指定すると、プロキシは「翻訳者」として振る舞います。クライアントの `tools` 定義をテキスト指示に変換し、モデルが出した `tool_calls` JSON をそのままクライアントに返します。**実行はクライアント側（pi等）が担い**、結果を受けて次の往復に進みます。
+`model` に `toritsu-agent` を指定すると、プロキシは「翻訳者」として振る舞います。クライアントの `tools` 定義をテキスト指示に変換し、モデルが出した `tool_calls` JSON をそのままクライアントに返します。**実行はクライアント側（pi等）が担い**、結果を受けて次の往復に進みます。`toritsu`／`toritsu-fast`／`toritsu-reasoning` に `tools` を付けた場合も同様に翻訳されます（呼出しが出なければ直接回答）。
 
 ```sh
 bun run src/index.ts

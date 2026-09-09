@@ -85,12 +85,13 @@ app.post("/v1/chat/completions", async (c) => {
   const tools = Array.isArray(body.tools) ? (body.tools as unknown[]) : [];
 
   try {
-    if (model === AGENT_MODEL) {
-      // toolsなし・tool_choice none のエージェント要求は通常チャットに格下げする
-      if (tools.length === 0 || body.tool_choice === "none") {
-        return await handlePublicChat(req);
-      }
+    // tools付きはモデル問わず翻訳を試みる。呼出しが出なければ直接回答にフォールバックする
+    if (tools.length > 0 && body.tool_choice !== "none") {
       return await handleAgentChat(req, tools);
+    }
+    if (model === AGENT_MODEL) {
+      // toolsなしの toritsu-agent は通常チャットに格下げする
+      return await handlePublicChat(req);
     }
     const webuiModel = WEBUI_MODELS[model as keyof typeof WEBUI_MODELS];
     if (webuiModel !== undefined) {
