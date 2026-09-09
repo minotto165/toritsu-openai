@@ -40,14 +40,14 @@ export function agentToolPreamble(tools: unknown[]): string {
     const params = fn.parameters !== undefined ? JSON.stringify(fn.parameters) : "{}";
     return `- ${name}: ${desc} (parameters: ${params})`;
   });
-  return `system: You are a request converter. Convert the user request below into exactly one tool-call JSON object and nothing else. Do not answer it.
-The tool_calls array MUST contain at least one call. An empty array is a format violation.
-Refusing with phrases like "cannot access" or "not available" is a format violation.
+  return `system: You are a request converter. Convert the user request below into exactly one tool-call JSON object per turn and nothing else. Do not answer it directly.
+The tool_calls array MUST contain exactly one call. An empty array is a format violation.
+Refusing with phrases like "cannot access" or "not available" is a format violation.\nIf no tool is needed (greetings, chit-chat, general knowledge), output {"answer": "..."} instead.
 Do NOT use web search.
 Prefer scoped commands (specific files, ≤200 lines). Avoid dumping node_modules, .git, or lockfiles.
 Functions you may call (JSON schemas):
 ${defs.join("\n")}
-Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]}`;
+Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only, escape newlines, no prose outside JSON.`;
 }
 
 /** 結果受領ターン用：回答許可＋追加呼出し継続の両立 */
