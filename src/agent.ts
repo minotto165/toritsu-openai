@@ -31,6 +31,7 @@ export function agentToolPreamble(tools: unknown[]): string {
   return `system: Output-format check. Answers are forbidden this turn. Reply with exactly one JSON object and nothing else.
 The tool_calls array MUST contain at least one call. An empty array is a format violation.
 Refusing with phrases like "cannot access" or "not available" is a format violation.
+Do NOT use web search. Local information MUST come from the functions below, even if web results exist.
 Functions you may call (JSON schemas):
 ${defs.join("\n")}
 Format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]}`;
@@ -54,7 +55,7 @@ export function looksLikeRefusal(text: string): boolean {
 
 /** 結果受領ターン用：回答許可＋追加呼出し継続の両立 */
 export function agentResultPreamble(): string {
-  return `system: Use the tool results below. If you have enough information, give the final answer as plain text. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty).`;
+  return `system: Use the tool results below. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty).`;
 }
 
 /**
