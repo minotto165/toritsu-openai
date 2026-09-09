@@ -67,6 +67,14 @@ export type ParsedOutput =
   | { type: "tool_calls"; calls: Array<{ id: string; name: string; args: string }> }
   | { type: "answer"; text: string };
 
+function tryParse(s: string): unknown | null {
+  try {
+    return JSON.parse(s) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 function extractJson(text: string): unknown | null {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   const candidate = fenced !== null ? fenced[1] : text;
@@ -75,11 +83,13 @@ function extractJson(text: string): unknown | null {
   if (start < 0 || end <= start) {
     return null;
   }
-  try {
-    return JSON.parse(candidate.slice(start, end + 1)) as unknown;
-  } catch {
-    return null;
-  }
+  const sliced = candidate.slice(start, end + 1);
+  // モデルが文字列内に生の改行等を混ぜた不正JSONを返すことがあるため、
+  // 厳密パース失敗時は制御文字をエスケープして再試行する
+  return (
+    tryParse(sliced) ??
+    tryParse(sliced.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t"))
+  );
 }
 
 /**
@@ -107,6 +117,20 @@ export function parseAssistantOutput(text: string): ParsedOutput {
     const answer = (obj as { answer?: unknown }).answer;
     if (typeof answer === "string") {
       return { type: "answer", text: answer };
+    }
+  }
+  // 不正JSON救済：{"answer": "..."} の形だけ寛容に抜き出す
+  // （コード回答内の生改行・エスケープ漏れの " に対応）
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{") || trimmed.startsWith("```")) {
+    const m = text.match(/"answer"\s*:\s*"([\s\S]*)"\s*\}\s*(```\s*)?$/);
+    if (m !== null && m[1] !== undefined) {
+      const unescaped = m[1]
+        .replace(/\\"/g, '"')
+        .replace(/\\n/g, "\n")
+        .replace(/\\r/g, "\r")
+        .replace(/\\t/g, "\t");
+      return { type: "answer", text: unescaped };
     }
   }
   return { type: "answer", text };
