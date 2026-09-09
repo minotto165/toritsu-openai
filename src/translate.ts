@@ -15,6 +15,16 @@ function toText(content: unknown): string {
   return typeof content === "string" ? content : JSON.stringify(content);
 }
 
+/** tool実行結果の上限。超過分は切詰め表示にする（上流2万文字制限対策） */
+const TOOL_CONTENT_CAP = 4000;
+
+function capToolText(s: string): string {
+  if (s.length <= TOOL_CONTENT_CAP) {
+    return s;
+  }
+  return `${s.slice(0, TOOL_CONTENT_CAP)}\n...[truncated ${s.length - TOOL_CONTENT_CAP} chars]`;
+}
+
 /**
  * OpenAI messages[] を都立AIの input 文字列1本に畳む。
  * system role は全て抽出して文頭ブロック化し、残りを "role: content" 行で連結する。
@@ -31,7 +41,7 @@ export function toToritsuInput(
   const rest = messages.filter((m) => m.role !== "system");
   const lines = rest.map((m) => {
     if (m.role === "tool") {
-      return `tool: ${toText(m.content)}`;
+      return `tool: ${capToolText(toText(m.content))}`;
     }
     if (m.role === "assistant" && m.tool_calls !== undefined) {
       const head = `assistant: ${toText(m.content)}`;
