@@ -26,6 +26,27 @@ function capToolText(s: string): string {
 }
 
 /**
+ * 送信対象メッセージの選択。上流は conversation_id で履歴を保持しているため、
+ * 継続ターンでは system＋最新の1件だけ送れば足りる（入力肥大の根本対策）。
+ * 新規スレッド（conversation_id 空）では全件送る。
+ */
+export function selectMessages(messages: ChatMessage[], conversationId: string): ChatMessage[] {
+  if (conversationId === "") {
+    return messages;
+  }
+  const systems = messages.filter((m) => m.role === "system");
+  const rest = messages.filter((m) => m.role !== "system");
+  if (rest.length === 0) {
+    return messages;
+  }
+  const last = rest[rest.length - 1];
+  if (last === undefined) {
+    return messages;
+  }
+  return [...systems, last];
+}
+
+/**
  * OpenAI messages[] を都立AIの input 文字列1本に畳む。
  * system role は全て抽出して文頭ブロック化し、残りを "role: content" 行で連結する。
  * role:tool のメッセージはツール実行結果として "tool: ..." 行にする。

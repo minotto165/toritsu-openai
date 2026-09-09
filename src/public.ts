@@ -4,6 +4,7 @@ import {
   toToritsuInput,
   toChatCompletion,
   upstreamErrorMessage,
+  selectMessages,
 } from "./translate";
 
 export interface PublicResult {
@@ -66,7 +67,7 @@ export async function handlePublicChat(req: ChatRequest): Promise<Response> {
       "server_error",
     );
   }
-  const input = toToritsuInput(req.messages, SYSTEM_FORMAT);
+  const input = toToritsuInput(selectMessages(req.messages, req.conversationId), SYSTEM_FORMAT);
   const pub = await callPublicUpstream(input, req.conversationId, apiKey);
   const completion = toChatCompletion(req.model, pub.data);
   return req.stream ? toSSE(completion) : json(completion, 200);

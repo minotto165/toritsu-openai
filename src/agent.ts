@@ -10,6 +10,7 @@ import {
   toToritsuInput,
   toChatCompletion,
   parseAssistantOutput,
+  selectMessages,
 } from "./translate";
 
 export const AGENT_MODEL = "toritsu-agent";
@@ -72,8 +73,12 @@ export async function handleAgentChat(
   const hasResults = req.messages.some((m) => m.role === "tool");
   const preamble = hasResults ? agentResultPreamble() : agentToolPreamble(tools);
   // クライアントのsystemは捨てる：API提供ツール前提の記述が
-  // テキスト指示と矛盾し、モデルが実行を拒む原因になるため
-  const messages = req.messages.filter((m) => m.role !== "system");
+  // テキスト指示と矛盾し、モデルが実行を拒む原因になるため。
+  // 継続ターンは最新1件のみ送る（上流が履歴を保持しているため）
+  const messages = selectMessages(
+    req.messages.filter((m) => m.role !== "system"),
+    req.conversationId,
+  );
   const input = shrinkInput(toToritsuInput(messages, SYSTEM_FORMAT, preamble));
   if (process.env.TORITSU_DEBUG === "1") {
     const toolChars = req.messages

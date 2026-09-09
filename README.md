@@ -103,6 +103,8 @@ pi -p "..." --provider toritsu --model toritsu-reasoning
 
 WebUIモデルでは `conversation_id` にWebUIの会話ID（`hid`）が入ります。授業キー方式のIDとは互換がありません。
 
+上流は `conversation_id` で履歴を保持しているため、継続ターンではsystem＋最新の発話のみ送信します（入力肥大防止）。新規スレッドでは全件送信します。
+
 > ⚠️ 注意：セッショントークンは学校アカウント全体へのアクセスに繋がります。`~/.config/toritsu-openai/session`（パーミッション0600）にのみ保存し、他人と共有しないでください。ログ・報告・gitのいずれにも含めないでください。
 
 ## エージェントモード（`toritsu-agent` モデル）
