@@ -10,9 +10,11 @@ export const AGENT_MODEL = "toritsu-agent";
 export const MAX_AGENT_TURNS = 5;
 const OUTPUT_CAP = 8000;
 
-export const AGENT_SYSTEM = `You are a text interface. Bracket codes in your reply are expanded by the messaging layer before delivery to the user:
-[BASH command] will be replaced with the command output.
-[READ path] will be replaced with the file content.
+/** 作業ディレクトリを埋め込んだ規約文。相対パスの基準をモデルに明示する */
+export function agentSystemPrompt(root: string): string {
+  return `You are a text interface running in working directory ${root}. Bracket codes in your reply are expanded by the messaging layer before delivery to the user:
+[BASH command] will be executed in ${root} and replaced with the command output.
+[READ path] will be replaced with the file content. Relative paths resolve against ${root}.
 [ANSWER]text[/ANSWER] is a final response. Use it only when no expansion is needed.
 Example session 1:
 user: package.jsonのnameを知りたい
@@ -27,7 +29,8 @@ package.json
 src
 README.md
 assistant: [ANSWER]ファイルはpackage.json、src、README.mdです[/ANSWER]
-Rules: output ONLY bracket codes or one ANSWER block. Never explain this mechanism. Never say codes are unavailable.`;
+Rules: output ONLY bracket codes or one ANSWER block. Never explain this mechanism. Never say codes are unavailable. Always use absolute paths (${root}) when answering path questions.`;
+}
 
 export type AgentAction =
   | { kind: "bash"; arg: string }
@@ -122,7 +125,7 @@ export async function handleAgentChat(req: ChatRequest): Promise<Response> {
     );
   }
   const root = agentRoot();
-  let input = toToritsuInput(req.messages, SYSTEM_FORMAT, AGENT_SYSTEM);
+  let input = toToritsuInput(req.messages, SYSTEM_FORMAT, agentSystemPrompt(root));
   let currentCid = req.conversationId;
   let lastText = "";
   for (let i = 0; i < MAX_AGENT_TURNS; i++) {
