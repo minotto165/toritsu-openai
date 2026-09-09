@@ -33,8 +33,9 @@ if (process.argv.includes("--login")) {
 }
 
 /**
- * セッションログイン：既定ブラウザで都立AIを開き、
- * ユーザーが貼り付けたセッショントークンを検証・保存する。
+ * セッションログイン：Chromeを自動で開き、ユーザーの手動ログイン後に
+ * localStorage のトークンを自動で抜き出して保存する。
+ * Chromeが使えない場合のみ手動貼付けにフォールバックする。
  * 学校アカウントの認証情報自体は扱わない。
  */
 async function runLogin(): Promise<void> {
@@ -42,19 +43,16 @@ async function runLogin(): Promise<void> {
   console.log("注意: 保存されるのは都立AIのセッショントークンです。");
   console.log("学校アカウント全体へのアクセスに繋がるため、他人と共有しないでください。");
   console.log("");
-  console.log("1. ブラウザで都立AIにログインしてください（自動で開きます）。");
+  const { autoLogin } = await import("./login");
+  if (await autoLogin()) {
+    return;
+  }
+  console.log("");
+  console.log("--- 手動方式に切替えます ---");
+  console.log("1. ブラウザで都立AIにログインしてください。");
   console.log("2. DevTools → Network で api/v1/chat/ へのリクエストを探します。");
   console.log('3. Request Headers の authorization の値（"Bearer " を除いた部分）を貼り付けます。');
   console.log("");
-  try {
-    const proc = Bun.spawn(["open", "https://ai.metro.tokyo.lg.jp/"], {
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    proc.exited.then(() => undefined).catch(() => undefined);
-  } catch {
-    console.log("(ブラウザを自動で開けませんでした。手動で開いてください)");
-  }
   const { createInterface } = await import("node:readline/promises");
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   let token = "";

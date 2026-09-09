@@ -88,7 +88,7 @@ TORITSU_KEY_FILE=~/.config/toritsu-openai/key bun run src/index.ts
 既定では授業APIキー方式（単一モデル）で動作します。WebUIと同じ推論モデル（`13`）・高速モデル（`10`）を使いたい場合は、学校セッションを使うセッションモードに切替えます。
 
 ```sh
-# 1. ログイン（ブラウザが開くので都立AIにログインし、指示に従いトークンを貼付け）
+# 1. ログイン（Chromeが自動で開くので都立AIにログインするだけ。トークンは自動取得）
 bun run src/index.ts --login
 # 2. モデル指定で起動
 TORITSU_MODEL=13 bun run src/index.ts
