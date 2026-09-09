@@ -51,8 +51,14 @@ Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions a
 }
 
 /** 結果受領ターン用：回答許可＋追加呼出し継続の両立 */
-export function agentResultPreamble(): string {
-  return `system: Use the tool results below. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty). Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).`;
+export function agentResultPreamble(tools: unknown[] = []): string {
+  const names = tools.map((t, i) => {
+    const o = (t ?? {}) as { function?: unknown };
+    const fn = (o.function ?? {}) as { name?: unknown };
+    return typeof fn.name === "string" ? fn.name : `tool_${i}`;
+  });
+  const available = names.length > 0 ? `\nAvailable functions: ${names.join(", ")}` : "";
+  return `system: Use the tool results below. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty). Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).${available}`;
 }
 
 /**
@@ -65,10 +71,12 @@ export async function handleAgentChat(
   tools: unknown[],
 ): Promise<Response> {
   const webuiModel = WEBUI_MODELS[req.model as keyof typeof WEBUI_MODELS];
-  // 結果ターン（role:tool あり）では回答許可の指示に切替える。
-  // そうしないと呼出しを繰返し、最終回答に到達しない
-  const hasResults = req.messages.some((m) => m.role === "tool");
-  const preamble = hasResults ? agentResultPreamble() : agentToolPreamble(tools);
+  // 末尾roleで判定：tool結果直後だけ回答許可、それ以外（新規user等）は呼出し強要に戻す。
+  // 履歴全体のsome()だと一度でもtoolを使うと以降ずっと結果ターンになり、
+  // 「ここ直して」がtoolレスポンス扱いで直書き返答される。
+  const lastMsg = req.messages.length > 0 ? req.messages[req.messages.length - 1] : undefined;
+  const isToolResultTurn = lastMsg !== undefined && lastMsg.role === "tool";
+  const preamble = isToolResultTurn ? agentResultPreamble(tools) : agentToolPreamble(tools);
   // クライアントのsystemは捨てる：API提供ツール前提の記述が
   // テキスト指示と矛盾し、モデルが実行を拒む原因になるため。
   // 継続ターンは最新1件のみ送る（上流が履歴を保持しているため）
