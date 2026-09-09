@@ -4,9 +4,12 @@ import {
   toToritsuInput,
   toChatCompletion,
   upstreamErrorMessage,
+  buildToolsInstruction,
+  parseAssistantOutput,
   type ChatMessage,
   type ChatCompletion,
   type SystemFormat,
+  type ToolDef,
 } from "./translate";
 
 const TORITSU_API_URL =
@@ -70,9 +73,44 @@ function invalidRequest(message: string): Response {
 /**
  * 疑似SSE：上流は一括応答のみのため、全文をチャンク分割して
  * OpenAI形式の chat.completion.chunk ストリームとして返す。
+ * tool_calls の場合は構造化deltaとして1発で流す。
  */
 function toSSE(completion: ChatCompletion): Response {
-  const content = completion.choices[0]?.message.content ?? "";
+  const choice = completion.choices[0];
+  const base = {
+    id: completion.id,
+    object: "chat.completion.chunk",
+    created: completion.created,
+    model: completion.model,
+  };
+  let body = "";
+  const toolCalls = choice?.message.tool_calls;
+  if (toolCalls !== undefined && toolCalls.length > 0) {
+    body += `data: ${JSON.stringify({
+      ...base,
+      choices: [
+        {
+          index: 0,
+          delta: { role: "assistant", content: null, tool_calls: toolCalls },
+          finish_reason: null,
+        },
+      ],
+    })}\n\n`;
+    body += `data: ${JSON.stringify({
+      ...base,
+      choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+    })}\n\n`;
+    body += "data: [DONE]\n\n";
+    return new Response(body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
+  const content = choice?.message.content ?? "";
   const SIZE = 60;
   const chunks: string[] = [];
   for (let i = 0; i < content.length; i += SIZE) {
@@ -81,13 +119,6 @@ function toSSE(completion: ChatCompletion): Response {
   if (chunks.length === 0) {
     chunks.push("");
   }
-  const base = {
-    id: completion.id,
-    object: "chat.completion.chunk",
-    created: completion.created,
-    model: completion.model,
-  };
-  let body = "";
   for (const text of chunks) {
     body += `data: ${JSON.stringify({
       ...base,
@@ -115,12 +146,19 @@ app.post("/v1/chat/completions", async (c) => {
     messages?: unknown;
     stream?: unknown;
     conversation_id?: unknown;
+    tools?: unknown;
+    tool_choice?: unknown;
   } | null;
 
   if (body === null || !Array.isArray(body.messages) || body.messages.length === 0) {
     return invalidRequest("messages is required");
   }
   const stream = body.stream === true;
+
+  // 上流は tools field を受け付けないため、テキスト指示に変換して畳み込む。
+  // 実行役は持たず、tool_calls の判定だけ返してクライアントに実行させる。
+  const tools = Array.isArray(body.tools) ? (body.tools as ToolDef[]) : [];
+  const useTools = tools.length > 0 && body.tool_choice !== "none";
 
   const apiKey = getApiKey();
   if (!apiKey) {
@@ -132,7 +170,8 @@ app.post("/v1/chat/completions", async (c) => {
 
   const conversationId =
     typeof body.conversation_id === "string" ? body.conversation_id : "";
-  const input = toToritsuInput(body.messages as ChatMessage[], SYSTEM_FORMAT);
+  const extraSystem = useTools ? buildToolsInstruction(tools, body.tool_choice) : undefined;
+  const input = toToritsuInput(body.messages as ChatMessage[], SYSTEM_FORMAT, extraSystem);
 
   let upstream: Response;
   try {
@@ -184,6 +223,24 @@ app.post("/v1/chat/completions", async (c) => {
 
   const model = typeof body.model === "string" ? body.model : "toritsu-ai";
   const completion = toChatCompletion(model, data);
+  if (useTools) {
+    const raw = completion.choices[0]?.message.content ?? "";
+    const parsed = parseAssistantOutput(raw);
+    if (parsed.type === "tool_calls") {
+      const choice = completion.choices[0];
+      if (choice !== undefined) {
+        choice.message.content = null;
+        choice.message.tool_calls = parsed.calls.map((call) => ({
+          id: call.id,
+          type: "function" as const,
+          function: { name: call.name, arguments: call.args },
+        }));
+        choice.finish_reason = "tool_calls";
+      }
+    } else if (completion.choices[0] !== undefined) {
+      completion.choices[0].message.content = parsed.text;
+    }
+  }
   if (stream) {
     return toSSE(completion);
   }

@@ -3,10 +3,114 @@
 export interface ChatMessage {
   role: string;
   content: unknown;
+  tool_calls?: unknown;
+  tool_call_id?: unknown;
+  name?: unknown;
 }
 
 /** systemブロックの畳み込み形式。a: system行のまま先頭配置 / b: 【システム指示】ヘッダー化 */
 export type SystemFormat = "a" | "b";
+
+export interface ToolDef {
+  type?: unknown;
+  function?: {
+    name?: unknown;
+    description?: unknown;
+    parameters?: unknown;
+  };
+}
+
+/**
+ * tools定義を上流に渡すための指示文を組み立てる。
+ * 上流は tools field を受け付けないため、テキスト指示に変換する。
+ */
+export function buildToolsInstruction(tools: ToolDef[], toolChoice: unknown): string {
+  const lines = tools.map((t) => {
+    const fn = t.function ?? {};
+    const name = typeof fn.name === "string" ? fn.name : "unknown";
+    const desc = typeof fn.description === "string" ? fn.description : "";
+    const params = fn.parameters !== undefined ? JSON.stringify(fn.parameters) : "{}";
+    return `- ${name}: ${desc} (parameters: ${params})`;
+  });
+  let extra = "";
+  if (toolChoice === "required") {
+    extra = "必ずいずれかのツールを使うこと。";
+  } else if (
+    toolChoice !== null &&
+    typeof toolChoice === "object" &&
+    (toolChoice as { type?: unknown }).type === "function"
+  ) {
+    const fn = (toolChoice as { function?: { name?: unknown } }).function;
+    const name = fn !== undefined && typeof fn.name === "string" ? fn.name : null;
+    if (name !== null) {
+      extra = `必ずツール ${name} を使うこと。`;
+    }
+  }
+  return [
+    "【利用可能なツール】",
+    ...lines,
+    "",
+    "あなたはJSON出力ゲートウェイとして振る舞え。自然文の応答は禁止であり、出力は1個のJSONオブジェクトのみとする。",
+    "手順: 要求の達成にツールが必要ならtool_callsを、不要または全ツール実行済みならanswerを出力せよ。",
+    "ツールを使う場合の出力例:",
+    '{"tool_calls": [{"id": "call_1", "name": "read_memo", "arguments": {"memo_id": "memo-001"}}]}',
+    "最終回答の場合の出力例:",
+    '{"answer": "メモの内容は○○です"}',
+    "ツールはこのテキスト経由で実際に実行されるため「利用できない」と述べてはならない。argumentsはparametersに適合させよ。",
+    extra,
+  ]
+    .filter((l) => l !== "")
+    .join("\n");
+}
+
+export type ParsedOutput =
+  | { type: "tool_calls"; calls: Array<{ id: string; name: string; args: string }> }
+  | { type: "answer"; text: string };
+
+function extractJson(text: string): unknown | null {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  const candidate = fenced !== null ? fenced[1] : text;
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    return null;
+  }
+  try {
+    return JSON.parse(candidate.slice(start, end + 1)) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * モデルのテキスト応答を tool_calls / 最終回答に振り分ける。
+ */
+export function parseAssistantOutput(text: string): ParsedOutput {
+  const obj = extractJson(text);
+  if (obj !== null && typeof obj === "object") {
+    const calls = (obj as { tool_calls?: unknown }).tool_calls;
+    if (Array.isArray(calls) && calls.length > 0) {
+      const now = Date.now();
+      return {
+        type: "tool_calls",
+        calls: calls.map((c, i) => {
+          const item = (c ?? {}) as { id?: unknown; name?: unknown; arguments?: unknown };
+          const args = item.arguments;
+          return {
+            id: typeof item.id === "string" ? item.id : `call_${now}_${i}`,
+            name: typeof item.name === "string" ? item.name : "unknown",
+            args: typeof args === "string" ? args : JSON.stringify(args ?? {}),
+          };
+        }),
+      };
+    }
+    const answer = (obj as { answer?: unknown }).answer;
+    if (typeof answer === "string") {
+      return { type: "answer", text: answer };
+    }
+  }
+  return { type: "answer", text };
+}
 
 function toText(content: unknown): string {
   return typeof content === "string" ? content : JSON.stringify(content);
@@ -15,19 +119,38 @@ function toText(content: unknown): string {
 /**
  * OpenAI messages[] を都立AIの input 文字列1本に畳む。
  * system role は全て抽出して文頭ブロック化し、残りを "role: content" 行で連結する。
+ * role:tool のメッセージはツール実行結果として "tool: ..." 行にする。
+ * assistant の tool_calls は文脈維持のためJSON行として残す。
+ * extraSystem があれば system ブロックに追記する（tools指示文用）。
  */
-export function toToritsuInput(messages: ChatMessage[], format: SystemFormat = "a"): string {
+export function toToritsuInput(
+  messages: ChatMessage[],
+  format: SystemFormat = "a",
+  extraSystem?: string,
+): string {
   const systems = messages.filter((m) => m.role === "system");
   const rest = messages.filter((m) => m.role !== "system");
-  const lines = rest.map((m) => `${m.role}: ${toText(m.content)}`);
-  if (systems.length === 0) {
+  const lines = rest.map((m) => {
+    if (m.role === "tool") {
+      return `tool: ${toText(m.content)}`;
+    }
+    if (m.role === "assistant" && m.tool_calls !== undefined) {
+      const head = `assistant: ${toText(m.content)}`;
+      return `${head}\nassistant tool_calls: ${JSON.stringify(m.tool_calls)}`;
+    }
+    return `${m.role}: ${toText(m.content)}`;
+  });
+  const sysTexts = systems.map((m) => toText(m.content));
+  if (extraSystem !== undefined && extraSystem !== "") {
+    sysTexts.push(extraSystem);
+  }
+  if (sysTexts.length === 0) {
     return lines.join("\n");
   }
   if (format === "b") {
-    const sys = systems.map((m) => toText(m.content)).join("\n");
-    return `【システム指示】\n${sys}\n\n【会話】\n${lines.join("\n")}`;
+    return `【システム指示】\n${sysTexts.join("\n")}\n\n【会話】\n${lines.join("\n")}`;
   }
-  const sysLines = systems.map((m) => `system: ${toText(m.content)}`);
+  const sysLines = sysTexts.map((t) => `system: ${t}`);
   return [...sysLines, ...lines].join("\n");
 }
 
@@ -72,16 +195,26 @@ export function upstreamErrorMessage(data: ToritsuResponse | null): string {
   return "upstream error";
 }
 
+export interface ChatCompletionChoice {
+  index: number;
+  message: {
+    role: "assistant";
+    content: string | null;
+    tool_calls?: Array<{
+      id: string;
+      type: "function";
+      function: { name: string; arguments: string };
+    }>;
+  };
+  finish_reason: "stop" | "tool_calls";
+}
+
 export interface ChatCompletion {
   id: string;
   object: "chat.completion";
   created: number;
   model: string;
-  choices: Array<{
-    index: number;
-    message: { role: "assistant"; content: string };
-    finish_reason: "stop";
-  }>;
+  choices: ChatCompletionChoice[];
   /** 上流がトークン数を返すため実測値をマッピング（欠落時のみゼロ） */
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
   /** 非標準の付加フィールド：上流の conversation.id をそのまま返す */
