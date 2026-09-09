@@ -30,9 +30,26 @@ export function agentToolPreamble(tools: unknown[]): string {
   });
   return `system: Output-format check. Answers are forbidden this turn. Reply with exactly one JSON object and nothing else.
 The tool_calls array MUST contain at least one call. An empty array is a format violation.
+Refusing with phrases like "cannot access" or "not available" is a format violation.
 Functions you may call (JSON schemas):
 ${defs.join("\n")}
 Format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]}`;
+}
+
+/** 拒否文の検出：呼出しが出ずに能力否定で終わった場合に再試行する */
+const REFUSAL_PATTERNS = [
+  "利用できません",
+  "利用できない",
+  "できません",
+  "できない",
+  "アクセスできません",
+  "提供されていない",
+  "cannot access",
+  "not available",
+];
+
+export function looksLikeRefusal(text: string): boolean {
+  return REFUSAL_PATTERNS.some((p) => text.includes(p));
 }
 
 /** 結果受領ターン用：回答許可＋追加呼出し継続の両立 */
@@ -59,18 +76,32 @@ export async function handleAgentChat(
   const messages = req.messages.filter((m) => m.role !== "system");
   const input = toToritsuInput(messages, SYSTEM_FORMAT, preamble);
 
-  let text: string;
-  let cid: string;
-  let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-  if (webuiModel !== undefined) {
-    const token = loadSessionToken();
-    if (token === "") {
-      throw new UpstreamError(500, "session mode requires login — run with --login", "server_error");
+  const sendOnce = async (): Promise<{
+    text: string;
+    cid: string;
+    usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  }> => {
+    if (webuiModel !== undefined) {
+      const token = loadSessionToken();
+      if (token === "") {
+        throw new UpstreamError(
+          500,
+          "session mode requires login — run with --login",
+          "server_error",
+        );
+      }
+      const r = await sendWebuiMessage({
+        input,
+        hid: req.conversationId,
+        model: webuiModel,
+        token,
+      });
+      return {
+        text: r.content,
+        cid: r.hid,
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      };
     }
-    const r = await sendWebuiMessage({ input, hid: req.conversationId, model: webuiModel, token });
-    text = r.content;
-    cid = r.hid;
-  } else {
     const apiKey = getApiKey();
     if (!apiKey) {
       throw new UpstreamError(
@@ -80,17 +111,37 @@ export async function handleAgentChat(
       );
     }
     const r = await callPublicUpstream(input, req.conversationId, apiKey);
-    text = r.message;
-    cid = r.conversationId;
     const u = r.data.response?.usage;
     const num = (v: unknown): number => (typeof v === "number" ? v : 0);
-    usage = {
-      prompt_tokens: num(u?.input_tokens),
-      completion_tokens: num(u?.output_tokens),
-      total_tokens: num(u?.total_tokens),
+    return {
+      text: r.message,
+      cid: r.conversationId,
+      usage: {
+        prompt_tokens: num(u?.input_tokens),
+        completion_tokens: num(u?.output_tokens),
+        total_tokens: num(u?.total_tokens),
+      },
     };
+  };
+
+  // 呼出しターンで拒否文が返った場合のみ1回再試行する（サンプリングの揺らぎ対策）。
+  // 結果ターンは再試行しない（クライアントが反復を駆動するため）
+  let text = "";
+  let cid = req.conversationId;
+  let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+  let attempted = parseAssistantOutput("");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    ({ text, cid, usage } = await sendOnce());
+    attempted = parseAssistantOutput(text);
+    if (attempted.type === "tool_calls") {
+      break;
+    }
+    if (hasResults || !looksLikeRefusal(text)) {
+      break;
+    }
+    console.log("[toritsu-openai] refusal detected, retrying once");
   }
-  const parsed = parseAssistantOutput(text);
+  const parsed = attempted;
   if (parsed.type === "tool_calls") {
     const completion = toChatCompletion(req.model, {
       message: "",
