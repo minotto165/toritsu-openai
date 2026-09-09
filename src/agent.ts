@@ -50,7 +50,7 @@ export function parseAgentLine(text: string): AgentAction {
   if (line === undefined || line === "") {
     return { kind: "answer", text };
   }
-  const call = line.match(/^\[(BASH|READ)\s+([^\]]+)\]$/i);
+  const call = line.match(/^\[(BASH|READ)\s+([\s\S]*)\]\s*$/i);
   if (call !== null && call[1] !== undefined && call[2] !== undefined) {
     const cmd = call[1].toUpperCase();
     if (cmd === "BASH") {
