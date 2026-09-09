@@ -37,17 +37,58 @@ second = client.chat.completions.create(
 
 モデル名だけで振る舞いが決まります。
 
-| model               | 動作             | 要件     |
-| ------------------- | ---------------- | -------- |
-| `toritsu`           | 通常チャット     | APIキー  |
-| `toritsu-fast`      | 高速モデル       | ログイン |
-| `toritsu-reasoning` | 推論モデル       | ログイン |
-| `toritsu-agent`     | `toritsu` の別名 | APIキー  |
+| model               | 動作         | 要件     |
+| ------------------- | ------------ | -------- |
+| `toritsu`           | 通常チャット | APIキー  |
+| `toritsu-fast`      | 高速モデル   | ログイン |
+| `toritsu-reasoning` | 推論モデル   | ログイン |
 
 ```sh
 # ログイン（WebUIモデル用、1回だけ。Chromeが開くのでログインするだけ）
 bun run src/index.ts --login
 pi -p "..." --provider toritsu --model toritsu-reasoning
+```
+
+## クライアント登録
+
+### pi agent
+
+`~/.pi/agent/models.json` に追加します。
+
+```json
+{
+  "providers": {
+    "toritsu": {
+      "baseUrl": "http://localhost:3000/v1",
+      "api": "openai-completions",
+      "apiKey": "dummy",
+      "models": [{ "id": "toritsu" }, { "id": "toritsu-fast" }, { "id": "toritsu-reasoning" }]
+    }
+  }
+}
+```
+
+```sh
+pi --provider toritsu --model toritsu-reasoning
+```
+
+### opencode
+
+`~/.config/opencode/opencode.jsonc` の `provider` に追加します。
+
+```json
+"provider": {
+  "toritsu": {
+    "npm": "@ai-sdk/openai-compatible",
+    "name": "Toritsu AI (local)",
+    "options": { "baseURL": "http://localhost:3000/v1", "apiKey": "dummy" },
+    "models": {
+      "toritsu": { "name": "Toritsu AI" },
+      "toritsu-fast": { "name": "Toritsu Fast (session)" },
+      "toritsu-reasoning": { "name": "Toritsu Reasoning (session)" }
+    }
+  }
+}
 ```
 
 ## キーの貼り替え

@@ -1,6 +1,5 @@
-// エージェントモード：モデル名 toritsu-agent で有効。
-// クライアントの tools 定義をテキスト指示に変換し、モデルが出した
-// tool_calls JSON をそのままクライアントに返す「翻訳者」方式。
+// エージェント翻訳：クライアントの tools 定義をテキスト指示に変換し、
+// モデルが出した tool_calls JSON をそのままクライアントに返す。
 // 実行はクライアント側（pi等）が担い、プロキシは実行しない。
 import { SYSTEM_FORMAT, getApiKey } from "./config";
 import { json, toSSE, UpstreamError, type ChatRequest } from "./http";
@@ -13,9 +12,7 @@ import {
   selectMessages,
 } from "./translate";
 
-export const AGENT_MODEL = "toritsu-agent";
-
-/** 入力上限対策：先頭（規約文）を残し、古い履歴側を削る */
+/** クライアントの tools 定義をそのまま埋め込んだ指示文を作る */
 const INPUT_BUDGET = 18000;
 const HEAD_KEEP = 2000;
 

@@ -3,7 +3,7 @@ import { PORT } from "./config";
 import { invalidRequest, toErrorJson, UpstreamError, type ChatRequest } from "./http";
 import { handlePublicChat } from "./public";
 import { handleWebuiChat, WEBUI_MODELS } from "./webui";
-import { handleAgentChat, AGENT_MODEL } from "./agent";
+import { handleAgentChat } from "./agent";
 import { checkSession, saveSessionToken } from "./webui";
 import type { ChatMessage } from "./translate";
 
@@ -58,7 +58,7 @@ const app = new Hono();
 
 /**
  * モデル名で振分ける薄いルーター。各モデルは必ず有効な行き先を持つ。
- * - toritsu-agent → エージェントループ（公開Endpoint）
+ * - tools付き → 翻訳を試みる（呼出しが出なければ直接回答）
  * - toritsu-fast / toritsu-reasoning → セッションEndpoint（要ログイン）
  * - それ以外 → 通常チャット（公開Endpoint）
  */
@@ -88,10 +88,6 @@ app.post("/v1/chat/completions", async (c) => {
     // tools付きはモデル問わず翻訳を試みる。呼出しが出なければ直接回答にフォールバックする
     if (tools.length > 0 && body.tool_choice !== "none") {
       return await handleAgentChat(req, tools);
-    }
-    if (model === AGENT_MODEL) {
-      // toolsなしの toritsu-agent は通常チャットに格下げする
-      return await handlePublicChat(req);
     }
     const webuiModel = WEBUI_MODELS[model as keyof typeof WEBUI_MODELS];
     if (webuiModel !== undefined) {
