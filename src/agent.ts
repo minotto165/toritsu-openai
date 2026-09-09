@@ -37,22 +37,6 @@ ${defs.join("\n")}
 Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]}`;
 }
 
-/** 拒否文の検出：呼出しが出ずに能力否定で終わった場合に再試行する */
-const REFUSAL_PATTERNS = [
-  "利用できません",
-  "利用できない",
-  "できません",
-  "できない",
-  "アクセスできません",
-  "提供されていない",
-  "cannot access",
-  "not available",
-];
-
-export function looksLikeRefusal(text: string): boolean {
-  return REFUSAL_PATTERNS.some((p) => text.includes(p));
-}
-
 /** 結果受領ターン用：回答許可＋追加呼出し継続の両立 */
 export function agentResultPreamble(): string {
   return `system: Use the tool results below. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty).`;
@@ -125,24 +109,12 @@ export async function handleAgentChat(
     };
   };
 
-  // 呼出しターンで拒否文が返った場合のみ1回再試行する（サンプリングの揺らぎ対策）。
-  // 結果ターンは再試行しない（クライアントが反復を駆動するため）
+  // 呼出しターンと結果ターンで1往復ずつ送信する。再試行はしない
   let text = "";
   let cid = req.conversationId;
   let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-  let attempted = parseAssistantOutput("");
-  for (let attempt = 0; attempt < 2; attempt++) {
-    ({ text, cid, usage } = await sendOnce());
-    attempted = parseAssistantOutput(text);
-    if (attempted.type === "tool_calls") {
-      break;
-    }
-    if (hasResults || !looksLikeRefusal(text)) {
-      break;
-    }
-    console.log("[toritsu-openai] refusal detected, retrying once");
-  }
-  const parsed = attempted;
+  ({ text, cid, usage } = await sendOnce());
+  const parsed = parseAssistantOutput(text);
   if (parsed.type === "tool_calls") {
     const completion = toChatCompletion(req.model, {
       message: "",
