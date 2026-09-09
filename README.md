@@ -114,7 +114,7 @@ TORITSU_AGENT_CWD=/Users/minotto/dev/toritsu-openai bun run src/index.ts
 pi -p "現在のディレクトリの内容をまとめて" --provider toritsu --model toritsu-agent
 ```
 
-- 実行範囲は `TORITSU_AGENT_CWD`（既定は起動ディレクトリ）配下に限定。READの脱出・BASHはtimeout 30秒・出力8000文字cap
+- 実行ディレクトリは `TORITSU_AGENT_CWD`（既定は起動ディレクトリ）です。素の `ls -la` はそこが読まれます。`READ` はこの配下に限定されますが、`BASH` は絶対パスで配下外も触れます。BASHはtimeout 30秒・出力8000文字cap
 - 1タスクで上流呼び出しが数回発生します（クォータ消費に注意、最大5往復）
 
 > ⚠️ 注意：あなたの権限でコマンドが実行されます。サーバーを外部公開した状態での使用は危険です。ローカル利用に限ってください。
