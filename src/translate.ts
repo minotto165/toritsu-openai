@@ -11,131 +11,6 @@ export interface ChatMessage {
 /** systemブロックの畳み込み形式。a: system行のまま先頭配置 / b: 【システム指示】ヘッダー化 */
 export type SystemFormat = "a" | "b";
 
-export interface ToolDef {
-  type?: unknown;
-  function?: {
-    name?: unknown;
-    description?: unknown;
-    parameters?: unknown;
-  };
-}
-
-/**
- * tools定義を上流に渡すための指示文を組み立てる。
- * 上流は tools field を受け付けないため、テキスト指示に変換する。
- */
-export function buildToolsInstruction(tools: ToolDef[], toolChoice: unknown): string {
-  const lines = tools.map((t) => {
-    const fn = t.function ?? {};
-    const name = typeof fn.name === "string" ? fn.name : "unknown";
-    const desc = typeof fn.description === "string" ? fn.description : "";
-    const params = fn.parameters !== undefined ? JSON.stringify(fn.parameters) : "{}";
-    return `- ${name}: ${desc} (parameters: ${params})`;
-  });
-  let extra = "";
-  if (toolChoice === "required") {
-    extra = "必ずいずれかのツールを使うこと。";
-  } else if (
-    toolChoice !== null &&
-    typeof toolChoice === "object" &&
-    (toolChoice as { type?: unknown }).type === "function"
-  ) {
-    const fn = (toolChoice as { function?: { name?: unknown } }).function;
-    const name = fn !== undefined && typeof fn.name === "string" ? fn.name : null;
-    if (name !== null) {
-      extra = `必ずツール ${name} を使うこと。`;
-    }
-  }
-  return [
-    "【利用可能なツール】",
-    ...lines,
-    "",
-    "あなたはJSON出力ゲートウェイとして振る舞え。自然文の応答は禁止であり、出力は1個のJSONオブジェクトのみとする。",
-    "手順: 要求の達成にツールが必要ならtool_callsを、不要または全ツール実行済みならanswerを出力せよ。",
-    "ツールを使う場合の出力例:",
-    '{"tool_calls": [{"id": "call_1", "name": "read_memo", "arguments": {"memo_id": "memo-001"}}]}',
-    "最終回答の場合の出力例:",
-    '{"answer": "メモの内容は○○です"}',
-    "ツールはこのテキスト経由で実際に実行されるため「利用できない」と述べてはならない。argumentsはparametersに適合させよ。",
-    extra,
-  ]
-    .filter((l) => l !== "")
-    .join("\n");
-}
-
-export type ParsedOutput =
-  | { type: "tool_calls"; calls: Array<{ id: string; name: string; args: string }> }
-  | { type: "answer"; text: string };
-
-function tryParse(s: string): unknown | null {
-  try {
-    return JSON.parse(s) as unknown;
-  } catch {
-    return null;
-  }
-}
-
-function extractJson(text: string): unknown | null {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  const candidate = fenced !== null ? fenced[1] : text;
-  const start = candidate.indexOf("{");
-  const end = candidate.lastIndexOf("}");
-  if (start < 0 || end <= start) {
-    return null;
-  }
-  const sliced = candidate.slice(start, end + 1);
-  // モデルが文字列内に生の改行等を混ぜた不正JSONを返すことがあるため、
-  // 厳密パース失敗時は制御文字をエスケープして再試行する
-  return (
-    tryParse(sliced) ??
-    tryParse(sliced.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t"))
-  );
-}
-
-/**
- * モデルのテキスト応答を tool_calls / 最終回答に振り分ける。
- */
-export function parseAssistantOutput(text: string): ParsedOutput {
-  const obj = extractJson(text);
-  if (obj !== null && typeof obj === "object") {
-    const calls = (obj as { tool_calls?: unknown }).tool_calls;
-    if (Array.isArray(calls) && calls.length > 0) {
-      const now = Date.now();
-      return {
-        type: "tool_calls",
-        calls: calls.map((c, i) => {
-          const item = (c ?? {}) as { id?: unknown; name?: unknown; arguments?: unknown };
-          const args = item.arguments;
-          return {
-            id: typeof item.id === "string" ? item.id : `call_${now}_${i}`,
-            name: typeof item.name === "string" ? item.name : "unknown",
-            args: typeof args === "string" ? args : JSON.stringify(args ?? {}),
-          };
-        }),
-      };
-    }
-    const answer = (obj as { answer?: unknown }).answer;
-    if (typeof answer === "string") {
-      return { type: "answer", text: answer };
-    }
-  }
-  // 不正JSON救済：{"answer": "..."} の形だけ寛容に抜き出す
-  // （コード回答内の生改行・エスケープ漏れの " に対応）
-  const trimmed = text.trim();
-  if (trimmed.startsWith("{") || trimmed.startsWith("```")) {
-    const m = text.match(/"answer"\s*:\s*"([\s\S]*)"\s*\}\s*(```\s*)?$/);
-    if (m !== null && m[1] !== undefined) {
-      const unescaped = m[1]
-        .replace(/\\"/g, '"')
-        .replace(/\\n/g, "\n")
-        .replace(/\\r/g, "\r")
-        .replace(/\\t/g, "\t");
-      return { type: "answer", text: unescaped };
-    }
-  }
-  return { type: "answer", text };
-}
-
 function toText(content: unknown): string {
   return typeof content === "string" ? content : JSON.stringify(content);
 }
@@ -145,7 +20,7 @@ function toText(content: unknown): string {
  * system role は全て抽出して文頭ブロック化し、残りを "role: content" 行で連結する。
  * role:tool のメッセージはツール実行結果として "tool: ..." 行にする。
  * assistant の tool_calls は文脈維持のためJSON行として残す。
- * extraSystem があれば system ブロックに追記する（tools指示文用）。
+ * extraSystem があれば system ブロックに追記する（エージェント規約用）。
  */
 export function toToritsuInput(
   messages: ChatMessage[],

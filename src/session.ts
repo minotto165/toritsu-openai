@@ -1,6 +1,9 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { SYSTEM_FORMAT } from "./config";
+import { json, toSSE, UpstreamError, type ChatRequest } from "./http";
+import { toToritsuInput, toChatCompletion } from "./translate";
 
 export const SESSION_API_URL =
   "https://ai-api.metro.tokyo.lg.jp/api/v1/chat/message";
@@ -28,11 +31,11 @@ export function saveSessionToken(token: string): void {
   writeFileSync(SESSION_FILE, `${token.trim()}\n`, { mode: 0o600 });
 }
 
-/** TORITSU_MODEL を解決する。"10"（高速）/"13"（推論）のみ有効、それ以外はnull */
-export function resolveSessionModel(): string | null {
-  const m = (process.env.TORITSU_MODEL ?? "").trim();
-  return m === "10" || m === "13" ? m : null;
-}
+/** モデル名 → WebUIのモデルID。ここにない名前は通常チャット扱い */
+export const SESSION_MODELS = {
+  "toritsu-fast": "10",
+  "toritsu-reasoning": "13",
+} as const;
 
 /** tool/status へのGETでセッション有効性を確認する（クォータ非消費） */
 export async function checkSession(token: string): Promise<boolean> {
@@ -54,6 +57,36 @@ export async function checkSession(token: string): Promise<boolean> {
 export interface SessionResult {
   content: string;
   hid: string;
+}
+
+/** セッションチャット：WebUIと同じセッションEndpointを使う */
+export async function handleSessionChat(
+  req: ChatRequest,
+  sessionModel: string,
+): Promise<Response> {
+  const token = loadSessionToken();
+  if (token === "") {
+    throw new UpstreamError(500, "session mode requires login — run with --login", "server_error");
+  }
+  try {
+    const result = await sendSessionMessage({
+      input: toToritsuInput(req.messages, SYSTEM_FORMAT),
+      hid: req.conversationId,
+      model: sessionModel,
+      token,
+    });
+    const completion = toChatCompletion(req.model, {
+      message: result.content,
+      response: { conversation: { id: result.hid } },
+    });
+    return req.stream ? toSSE(completion) : json(completion, 200);
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("session expired")) {
+      console.error("[toritsu-openai] session expired — run with --login");
+      throw new UpstreamError(401, err.message, "authentication_error");
+    }
+    throw err;
+  }
 }
 
 export function adaptSessionResponse(data: unknown): SessionResult {

@@ -29,7 +29,7 @@ bun run src/index.ts
 ```sh
 curl -s -X POST http://localhost:3000/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"toritsu-ai","messages":[{"role":"user","content":"日本語で、春の短い俳句を1つ作って。"}]}'
+  -d '{"model":"toritsu","messages":[{"role":"user","content":"日本語で、春の短い俳句を1つ作って。"}]}'
 ```
 
 ### Python（openai SDK）例
@@ -39,7 +39,7 @@ from openai import OpenAI
 
 client = OpenAI(base_url="http://localhost:3000/v1", api_key="dummy")
 res = client.chat.completions.create(
-    model="toritsu-ai",
+    model="toritsu",
     messages=[{"role": "user", "content": "日本語で、春の短い俳句を1つ作って。"}],
 )
 print(res.choices[0].message.content)
@@ -51,13 +51,13 @@ print(res.choices[0].message.content)
 
 ```python
 first = client.chat.completions.create(
-    model="toritsu-ai",
+    model="toritsu",
     messages=[{"role": "user", "content": "私の名前はユウタです。"}],
 )
 cid = first.conversation_id  # 応答の付加フィールド
 
 second = client.chat.completions.create(
-    model="toritsu-ai",
+    model="toritsu",
     messages=[{"role": "user", "content": "私の名前は？"}],
     extra_body={"conversation_id": cid},
 )
@@ -83,6 +83,28 @@ TORITSU_KEY_FILE=~/.config/toritsu-openai/key bun run src/index.ts
 
 サーバーログにキー末尾4文字のフィンガープリントが出力されるので、どの世代で動いているか確認できます。上流から401が返ると `key may be expired, refresh KEY_FILE` のヒントがログに出ます。
 
+## モデル一覧
+
+モデル名だけで振る舞いが決まります。サーバー側の設定は不要です。
+
+| model | 動作 | 要件 |
+| --- | --- | --- |
+| `toritsu` | 通常チャット（公開Endpoint） | 授業キー |
+| `toritsu-fast` | 高速モデル（セッション方式） | ログイン（`--login`） |
+| `toritsu-reasoning` | 推論モデル（セッション方式） | ログイン（`--login`） |
+| `toritsu-agent` | エージェントループ（公開Endpoint・BASH/READ実行） | 授業キー |
+
+```sh
+# セッションモデルを使う場合の事前準備（1回だけ）
+bun run src/index.ts --login
+# あとはモデル名で選ぶだけ
+pi -p "..." --provider toritsu --model toritsu-reasoning
+```
+
+セッションモデルでは `conversation_id` にWebUIの会話ID（`hid`）が入ります。授業キー方式のIDとは互換がありません。
+
+> ⚠️ 注意：セッショントークンは学校アカウント全体へのアクセスに繋がります。`~/.config/toritsu-openai/session`（パーミッション0600）にのみ保存し、他人と共有しないでください。ログ・報告・gitのいずれにも含めないでください。
+
 ## エージェントモード（`toritsu-agent` モデル）
 
 `model` に `toritsu-agent` を指定すると、プロキシ側でコマンド実行を伴う往復ループが動きます（BASH/READ）。`pi` 等のエージェントから実ディレクトリ参照が可能です。
@@ -94,31 +116,8 @@ pi -p "現在のディレクトリの内容をまとめて" --provider toritsu -
 
 - 実行範囲は `TORITSU_AGENT_CWD`（既定は起動ディレクトリ）配下に限定。READの脱出・BASHはtimeout 30秒・出力8000文字cap
 - 1タスクで上流呼び出しが数回発生します（クォータ消費に注意、最大5往復）
-- セッションモードとの併用不可（公開Endpointを使用）。`TORITSU_MODEL=10/13` 設定時に `toritsu-agent` を使うと409エラーになります
-- クライアント側の `tools` は無視されます
 
 > ⚠️ 注意：あなたの権限でコマンドが実行されます。サーバーを外部公開した状態での使用は危険です。ローカル利用に限ってください。
-
-## モデル選択（セッションモード・任意）
-
-既定では授業APIキー方式（単一モデル）で動作します。WebUIと同じ推論モデル（`13`）・高速モデル（`10`）を使いたい場合は、学校セッションを使うセッションモードに切替えます。
-
-```sh
-# 1. ログイン（Chromeが自動で開くので都立AIにログインするだけ。トークンは自動取得）
-bun run src/index.ts --login
-# 2. モデル指定で起動
-TORITSU_MODEL=13 bun run src/index.ts
-```
-
-| `TORITSU_MODEL` | 意味 |
-| --- | --- |
-| 未設定 | 授業キー方式（既定） |
-| `10` | 高速モデル（セッション方式） |
-| `13` | 推論モデル（セッション方式） |
-
-セッションモードでは `conversation_id` にWebUIの会話ID（`hid`）が入ります。授業キー方式のIDとは互換がありません。
-
-> ⚠️ 注意：セッショントークンは学校アカウント全体へのアクセスに繋がります。`~/.config/toritsu-openai/session`（パーミッション0600）にのみ保存し、他人と共有しないでください。ログ・報告・gitのいずれにも含めないでください。
 
 ## 環境変数
 
@@ -126,8 +125,8 @@ TORITSU_MODEL=13 bun run src/index.ts
 | --- | --- | --- |
 | `TORITSU_API_KEY` | Yes（どちらか） | 都立AIのAPIキー（直指定） |
 | `TORITSU_KEY_FILE` | Yes（どちらか） | APIキーが書かれたファイルのパス（ホットリロード対応、1時間ごとの貼り替えに再起動不要） |
-| `TORITSU_SESSION` | セッションモード用 | WebUIのセッショントークン（`--login` で保存したファイルよりenv優先） |
-| `TORITSU_MODEL` | セッションモード用 | `10`=高速、`13`=推論。未設定・空・その他（例：`off`）なら授業キー方式。`.env` に値がある場合は起動時の環境変数が優先される |
+| `TORITSU_SESSION` | セッションモデル用 | WebUIのセッショントークン（`--login` で保存したファイルよりenv優先） |
+| `TORITSU_AGENT_CWD` | エージェント用 | 実行範囲ディレクトリ（既定は起動ディレクトリ） |
 | `PORT` | No | 待受ポート（既定3000） |
 | `TORITSU_API_URL` | No | 上流URLの上書き（テスト用） |
 | `TORITSU_SYSTEM_FORMAT` | No | `a`（既定）または `b` |
@@ -139,6 +138,5 @@ TORITSU_MODEL=13 bun run src/index.ts
 - 上流の `input` は20000文字以下です。これを超えると400エラーになります。
 - `/v1/models`・画像生成・responses APIには対応していません。
 - `usage` のトークン数は上流の実測値をマッピングしています。
-- `model` は任意の文字列を受け付け、そのまま応答にエコーします。
-- 上流の裏側は Azure OpenAI 系のモデルが動いていますが、function calling等のツール利用は公開エンドポイント経由では使えません（余分なフィールドを送ると上流が拒否します）。
-- `tools` 付きリクエストは実験的に受け付けます（ツール定義をテキスト指示に変換し、モデルがJSONで返せば `tool_calls` として返却）。ただし裏側モデルの指示追従の都合で高確率で直接回答になります。エージェント用途の動作保証はありません。
+- `model` は上表の4モデルのほか任意の文字列を受け付けます（未知の名前は通常チャット扱い）。応答には要求値をそのままエコーします。
+- 上流の裏側は Azure OpenAI 系のモデルが動いていますが、function calling等のツール利用は公開エンドポイント経由では使えません（余分なフィールドを送ると上流が拒否します）。エージェント用途には `toritsu-agent` を使ってください。

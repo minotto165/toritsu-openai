@@ -1,6 +1,10 @@
 // エージェントモード：モデル名 toritsu-agent で有効になる。
 // テキスト規約（[BASH cmd]/[READ path]/[ANSWER]...[/ANSWER]）で
 // モデルに実行要求を出させ、プロキシ側で実行して結果を返すループ。
+import { SYSTEM_FORMAT, getApiKey } from "./config";
+import { json, toSSE, UpstreamError, type ChatRequest } from "./http";
+import { callPublicUpstream } from "./public";
+import { toToritsuInput, toChatCompletion } from "./translate";
 
 export const AGENT_MODEL = "toritsu-agent";
 export const MAX_AGENT_TURNS = 5;
@@ -105,4 +109,43 @@ export async function execAgentAction(
 
 export function agentRoot(): string {
   return process.env.TORITSU_AGENT_CWD ?? process.cwd();
+}
+
+/** エージェントチャット：BASH/READ をプロキシ側で実行する往復ループ（公開Endpoint専用） */
+export async function handleAgentChat(req: ChatRequest): Promise<Response> {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    throw new UpstreamError(
+      500,
+      "TORITSU_API_KEY or TORITSU_KEY_FILE is not set",
+      "server_error",
+    );
+  }
+  const root = agentRoot();
+  let input = toToritsuInput(req.messages, SYSTEM_FORMAT, AGENT_SYSTEM);
+  let currentCid = req.conversationId;
+  let lastText = "";
+  for (let i = 0; i < MAX_AGENT_TURNS; i++) {
+    const res = await callPublicUpstream(input, currentCid, apiKey);
+    if (res.conversationId !== "") {
+      currentCid = res.conversationId;
+    }
+    lastText = res.message;
+    const action = parseAgentLine(res.message);
+    if (action.kind === "answer") {
+      const done = toChatCompletion(req.model, {
+        message: action.text,
+        response: { conversation: { id: currentCid } },
+      });
+      return req.stream ? toSSE(done) : json(done, 200);
+    }
+    const output = await execAgentAction(action, root);
+    const label = action.kind === "bash" ? "BASH" : "READ";
+    input = `user: [${label} ${action.arg}] => ${output}`;
+  }
+  const exhausted = toChatCompletion(req.model, {
+    message: lastText,
+    response: { conversation: { id: currentCid } },
+  });
+  return req.stream ? toSSE(exhausted) : json(exhausted, 200);
 }
