@@ -1,10 +1,11 @@
 # toritsu-openai
 
-Bun + Hono + TypeScriptで作られた、都立AIのOpenAI互換ラッパーAPI
+Tool Callingやその他の機能を追加した、都立AIのOpenAI互換ラッパーAPI
+Bun + Hono + TypeScriptで作成
 
 ## 前提
 
-- 都立AIの授業用APIキーが必要です（有効期限・利用回数に上限あり）。[こちらのページ](https://ai.metro.tokyo.lg.jp/chat/public-api)で取得してください。
+- 都立AIのAPIキーが必要です（有効期限・利用回数に上限あり）。[こちらのページ](https://ai.metro.tokyo.lg.jp/chat/public-api)で取得してください。
 
 ## クイックスタート
 
@@ -35,7 +36,7 @@ second = client.chat.completions.create(
 
 ## モデル一覧
 
-モデル名だけで振る舞いが決まります。
+（fastとreasoningはログインが面倒だが、API制限は完全に突破できる）
 
 | model               | 動作         | 要件     |
 | ------------------- | ------------ | -------- |
@@ -62,7 +63,11 @@ pi -p "..." --provider toritsu --model toritsu-reasoning
       "baseUrl": "http://localhost:3000/v1",
       "api": "openai-completions",
       "apiKey": "dummy",
-      "models": [{ "id": "toritsu" }, { "id": "toritsu-fast" }, { "id": "toritsu-reasoning" }]
+      "models": [
+        { "id": "toritsu" },
+        { "id": "toritsu-fast" },
+        { "id": "toritsu-reasoning" }
+      ]
     }
   }
 }
@@ -80,12 +85,12 @@ pi --provider toritsu --model toritsu-reasoning
 "provider": {
   "toritsu": {
     "npm": "@ai-sdk/openai-compatible",
-    "name": "Toritsu AI (local)",
+    "name": "Toritsu AI",
     "options": { "baseURL": "http://localhost:3000/v1", "apiKey": "dummy" },
     "models": {
       "toritsu": { "name": "Toritsu AI" },
-      "toritsu-fast": { "name": "Toritsu Fast (session)" },
-      "toritsu-reasoning": { "name": "Toritsu Reasoning (session)" }
+      "toritsu-fast": { "name": "Toritsu Fast" },
+      "toritsu-reasoning": { "name": "Toritsu Reasoning" }
     }
   }
 }
@@ -115,15 +120,14 @@ TORITSU_KEY_FILE=~/.config/toritsu-openai/key bun run src/index.ts
 - `system` は文頭に畳んで送信します。
 - `usage` は上流の実測値をマッピングしています。
 
-## 制限の突破：このプロキシの技術的背景
+## 技術的背景
 
-都立AIの公開Endpointは薄い入口です（`{input, conversation_id}` のみ・余分なfieldは401・2万文字制限・ストリーミングなし・モデル選択なし）。以下を1つずつ突破しています。
+都立AIの公開エンドポイントはゴミ（`{input, conversation_id}` のみ・余分なfieldは401・2万文字制限・ストリーミングなし・モデル選択なし）。
 
-- **401の罠**：`Accept-Encoding` なしのリクエストは問答無用で401になります。特定後は必須ヘッダとして送信しています。
-- **会話継続**：OpenAI側に枠がないため、非標準の `conversation_id` fieldで透過＋応答にechoします。
-- **system枠なし**：`system` メッセージを文頭ブロック化して畳み込みます（2形式をlive比較して採用）。
-- **tools拒否**：`tools` fieldはゲートウェイに弾かれます。定義をテキスト指示に変換し、モデルの `tool_calls` JSON出力をそのまま返す「翻訳者」方式で、全モデルからtool呼び出しを使えるようにしています。
-- **モデルの実行拒否**：裏側モデルは架空の道具を呼ばないと6回拒否されました。「テスト出力」「変換作業」フレーミング＋回答禁止＋矛盾するsystemの除去＋結果ターンの指示切替えで遵守させています。
-- **2万文字壁**：上流が履歴を保持していることを突き止め、継続ターンは最新のみ送信します。tool結果の切詰め・自動縮小と合わせて3層防御です。
-- **モデル選択**：WebUIの通信を観測してモデルID（高速10・推論13）とセッションEndpointを特定し、`--login` による自動取得と合わせて対応しました。
-- **ストリーミングなし**：一括応答をチャンク分割してSSE形式で配信します。
+- **会話継続**：非標準の `conversation_id` を活用
+- **システムプロンプトの枠なし**：`system` メッセージを文頭に挿入して送信
+- **toolsなし**：`tools` はゲートウェイに弾かれるので、定義をテキスト指示に変換し、モデルに `tool_calls` JSON出力をそのまま返させ、本物のtool callに戻すことで使えるように
+- **モデルの実行拒否**：モデルは、東京都側のシステムプロンプト注入によって、架空のtoolを呼ばないと頑なに拒否する→「テスト出力」「変換作業」フレーミング＋回答禁止＋矛盾するsystemの除去＋結果ターンの指示切替えで遵守させる
+- **2万文字制限**：上流の履歴保持に頼り、継続ターンは最新のみ送信する。tool結果の切詰めと自動縮小も行う
+- **モデル選択**：WebUIの通信を観測してモデルID（高速10・推論13）とエンドポイントを特定し、`--login` によるログインに対応
+- **ストリーミングなし**：一括応答を分割してSSE形式で配信
