@@ -92,7 +92,7 @@ TORITSU_KEY_FILE=~/.config/toritsu-openai/key bun run src/index.ts
 | `toritsu` | 通常チャット（公開Endpoint） | 授業キー |
 | `toritsu-fast` | 高速モデル（WebUI方式） | ログイン（`--login`） |
 | `toritsu-reasoning` | 推論モデル（WebUI方式） | ログイン（`--login`） |
-| `toritsu-agent` | エージェント翻訳（公開Endpoint・tool_calls中継） | 授業キー |
+| `toritsu-agent` | `toritsu` の別名（エージェント用途の明示用。動作は同一） | 授業キー |
 
 ```sh
 # WebUIモデルを使う場合の事前準備（1回だけ）
