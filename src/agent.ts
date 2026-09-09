@@ -28,13 +28,13 @@ export function agentToolPreamble(tools: unknown[]): string {
     const params = fn.parameters !== undefined ? JSON.stringify(fn.parameters) : "{}";
     return `- ${name}: ${desc} (parameters: ${params})`;
   });
-  return `system: Output-format check. Answers are forbidden this turn. Reply with exactly one JSON object and nothing else.
+  return `system: You are a request converter. Convert the user request below into exactly one tool-call JSON object and nothing else. Do not answer it.
 The tool_calls array MUST contain at least one call. An empty array is a format violation.
 Refusing with phrases like "cannot access" or "not available" is a format violation.
-Do NOT use web search. Local information MUST come from the functions below, even if web results exist.
+Do NOT use web search.
 Functions you may call (JSON schemas):
 ${defs.join("\n")}
-Format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]}`;
+Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]}`;
 }
 
 /** 拒否文の検出：呼出しが出ずに能力否定で終わった場合に再試行する */
