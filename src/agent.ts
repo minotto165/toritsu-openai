@@ -46,6 +46,7 @@ export function agentToolPreamble(tools: unknown[]): string {
 The tool_calls array MUST contain at least one call. An empty array is a format violation.
 Refusing with phrases like "cannot access" or "not available" is a format violation.
 Do NOT use web search.
+Prefer scoped commands (specific files, ≤200 lines). Avoid dumping node_modules, .git, or lockfiles.
 Functions you may call (JSON schemas):
 ${defs.join("\n")}
 Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]}`;
@@ -53,7 +54,7 @@ Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions a
 
 /** 結果受領ターン用：回答許可＋追加呼出し継続の両立 */
 export function agentResultPreamble(): string {
-  return `system: Use the tool results below. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty).`;
+  return `system: Use the tool results below. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty). Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).`;
 }
 
 /**
@@ -74,6 +75,14 @@ export async function handleAgentChat(
   // テキスト指示と矛盾し、モデルが実行を拒む原因になるため
   const messages = req.messages.filter((m) => m.role !== "system");
   const input = shrinkInput(toToritsuInput(messages, SYSTEM_FORMAT, preamble));
+  if (process.env.TORITSU_DEBUG === "1") {
+    const toolChars = req.messages
+      .filter((m) => m.role === "tool")
+      .reduce((n, m) => n + JSON.stringify(m.content ?? "").length, 0);
+    console.log(
+      `[toritsu-openai] agent input_len=${input.length} tool_chars=${toolChars} turns=${req.messages.length}`,
+    );
+  }
 
   const sendOnce = async (): Promise<{
     text: string;
