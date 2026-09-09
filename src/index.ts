@@ -19,6 +19,14 @@ import {
   checkSession,
   sendSessionMessage,
 } from "./session";
+import {
+  AGENT_MODEL,
+  AGENT_SYSTEM,
+  MAX_AGENT_TURNS,
+  parseAgentLine,
+  execAgentAction,
+  agentRoot,
+} from "./agent";
 
 const TORITSU_API_URL =
   process.env.TORITSU_API_URL ?? "https://ai-api.metro.tokyo.lg.jp/api/v1/public/message";
@@ -111,6 +119,116 @@ if (KEY_FILE) {
 
 function getApiKey(): string {
   return currentApiKey;
+}
+
+class UpstreamError extends Error {
+  status: number;
+  errType: string;
+  code?: number;
+  constructor(status: number, message: string, errType: string, code?: number) {
+    super(message);
+    this.status = status;
+    this.errType = errType;
+    this.code = code;
+  }
+}
+
+interface PublicResult {
+  data: Parameters<typeof toChatCompletion>[1];
+  message: string;
+  conversationId: string;
+}
+
+/** 公開Endpointへの送信を1往復する。失敗時は UpstreamError を投げる */
+async function callPublicUpstream(
+  input: string,
+  cid: string,
+  apiKey: string,
+): Promise<PublicResult> {
+  let upstream: Response;
+  try {
+    upstream = await fetch(TORITSU_API_URL, {
+      method: "POST",
+      headers: {
+        // 上流は Accept-Encoding なしのリクエストを401で拒否するため必須
+        Accept: "application/json",
+        "Accept-Encoding": "gzip, deflate",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      // 上流は {input, conversation_id} 以外のトップレベル field を401で拒否するため厳密にこの2つのみ送る
+      body: JSON.stringify({ input, conversation_id: cid }),
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch {
+    throw new UpstreamError(502, "upstream unreachable", "upstream_unreachable");
+  }
+  const data = (await upstream.json().catch(() => null)) as PublicResult["data"] | null;
+  if (!upstream.ok) {
+    if (upstream.status === 401 && KEY_FILE) {
+      console.error(`[toritsu-openai] 401 from upstream - key may be expired, refresh ${KEY_FILE}`);
+    }
+    throw new UpstreamError(
+      upstream.status,
+      upstreamErrorMessage(data),
+      "toritsu_api_error",
+      upstream.status,
+    );
+  }
+  if (data === null) {
+    throw new UpstreamError(502, "invalid upstream response", "toritsu_api_error");
+  }
+  const msg = typeof data.message === "string" ? data.message : "";
+  const id = data.response?.conversation?.id;
+  return { data, message: msg, conversationId: typeof id === "string" ? id : "" };
+}
+
+function toErrorJson(err: UpstreamError): Response {
+  const e: { message: string; type: string; code?: number } = {
+    message: err.message,
+    type: err.errType,
+  };
+  if (err.code !== undefined) {
+    e.code = err.code;
+  }
+  return json({ error: e }, err.status);
+}
+
+/**
+ * エージェントループ：モデルに [BASH]/[READ] を出させ、プロキシ側で実行し、
+ * 結果を返して [ANSWER] が出るまで往復する（最大 MAX_AGENT_TURNS）。
+ * 公開Endpointを使用する。実行は TORITSU_AGENT_CWD（既定カレント）に閉じる。
+ */
+async function runAgentLoop(
+  messages: ChatMessage[],
+  cid: string,
+  apiKey: string,
+): Promise<ChatCompletion> {
+  const root = agentRoot();
+  let input = toToritsuInput(messages, SYSTEM_FORMAT, AGENT_SYSTEM);
+  let currentCid = cid;
+  let lastText = "";
+  for (let i = 0; i < MAX_AGENT_TURNS; i++) {
+    const res = await callPublicUpstream(input, currentCid, apiKey);
+    if (res.conversationId !== "") {
+      currentCid = res.conversationId;
+    }
+    lastText = res.message;
+    const action = parseAgentLine(res.message);
+    if (action.kind === "answer") {
+      return toChatCompletion(AGENT_MODEL, {
+        message: action.text,
+        response: { conversation: { id: currentCid } },
+      });
+    }
+    const output = await execAgentAction(action, root);
+    const label = action.kind === "bash" ? "BASH" : "READ";
+    input = `user: [${label} ${action.arg}] => ${output}`;
+  }
+  return toChatCompletion(AGENT_MODEL, {
+    message: lastText,
+    response: { conversation: { id: currentCid } },
+  });
 }
 
 const app = new Hono();
@@ -274,55 +392,38 @@ app.post("/v1/chat/completions", async (c) => {
   const extraSystem = useTools ? buildToolsInstruction(tools, body.tool_choice) : undefined;
   const input = toToritsuInput(body.messages as ChatMessage[], SYSTEM_FORMAT, extraSystem);
 
-  let upstream: Response;
-  try {
-    upstream = await fetch(TORITSU_API_URL, {
-      method: "POST",
-      headers: {
-        // 上流は Accept-Encoding なしのリクエストを401で拒否するため必須
-        Accept: "application/json",
-        "Accept-Encoding": "gzip, deflate",
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      // 上流は {input, conversation_id} 以外のトップレベル field を401で拒否するため厳密にこの2つのみ送る
-      body: JSON.stringify({ input, conversation_id: conversationId }),
-      signal: AbortSignal.timeout(60_000),
-    });
-  } catch {
-    return json(
-      { error: { message: "upstream unreachable", type: "upstream_unreachable" } },
-      502,
-    );
-  }
-
-  const data = (await upstream.json().catch(() => null)) as Parameters<
-    typeof toChatCompletion
-  >[1] | null;
-
-  if (!upstream.ok) {
-    if (upstream.status === 401 && KEY_FILE) {
-      console.error(`[toritsu-openai] 401 from upstream - key may be expired, refresh ${KEY_FILE}`);
+  // エージェントモード：モデル名 toritsu-agent で有効。BASH/READ をプロキシ側で実行する。
+  // セッションモードとの併用不可（公開Endpointを使用）。クライアントの tools は無視する。
+  if (model === AGENT_MODEL) {
+    try {
+      const completion = await runAgentLoop(
+        body.messages as ChatMessage[],
+        conversationId,
+        apiKey,
+      );
+      if (stream) {
+        return toSSE(completion);
+      }
+      return c.json(completion);
+    } catch (err) {
+      if (err instanceof UpstreamError) {
+        return toErrorJson(err);
+      }
+      throw err;
     }
-    return json(
-      {
-        error: {
-          message: upstreamErrorMessage(data),
-          type: "toritsu_api_error",
-          code: upstream.status,
-        },
-      },
-      upstream.status,
-    );
-  }
-  if (data === null) {
-    return json(
-      { error: { message: "invalid upstream response", type: "toritsu_api_error" } },
-      502,
-    );
   }
 
-  const completion = toChatCompletion(model, data);
+  let pub: PublicResult;
+  try {
+    pub = await callPublicUpstream(input, conversationId, apiKey);
+  } catch (err) {
+    if (err instanceof UpstreamError) {
+      return toErrorJson(err);
+    }
+    throw err;
+  }
+
+  const completion = toChatCompletion(model, pub.data);
   if (useTools) {
     const raw = completion.choices[0]?.message.content ?? "";
     const parsed = parseAssistantOutput(raw);

@@ -83,6 +83,22 @@ TORITSU_KEY_FILE=~/.config/toritsu-openai/key bun run src/index.ts
 
 サーバーログにキー末尾4文字のフィンガープリントが出力されるので、どの世代で動いているか確認できます。上流から401が返ると `key may be expired, refresh KEY_FILE` のヒントがログに出ます。
 
+## エージェントモード（`toritsu-agent` モデル）
+
+`model` に `toritsu-agent` を指定すると、プロキシ側でコマンド実行を伴う往復ループが動きます（BASH/READ）。`pi` 等のエージェントから実ディレクトリ参照が可能です。
+
+```sh
+TORITSU_AGENT_CWD=/Users/minotto/dev/toritsu-openai bun run src/index.ts
+pi -p "現在のディレクトリの内容をまとめて" --provider toritsu --model toritsu-agent
+```
+
+- 実行範囲は `TORITSU_AGENT_CWD`（既定は起動ディレクトリ）配下に限定。READの脱出・BASHはtimeout 30秒・出力8000文字cap
+- 1タスクで上流呼び出しが数回発生します（クォータ消費に注意、最大5往復）
+- セッションモードとの併用不可（公開Endpointを使用）
+- クライアント側の `tools` は無視されます
+
+> ⚠️ 注意：あなたの権限でコマンドが実行されます。サーバーを外部公開した状態での使用は危険です。ローカル利用に限ってください。
+
 ## モデル選択（セッションモード・任意）
 
 既定では授業APIキー方式（単一モデル）で動作します。WebUIと同じ推論モデル（`13`）・高速モデル（`10`）を使いたい場合は、学校セッションを使うセッションモードに切替えます。
