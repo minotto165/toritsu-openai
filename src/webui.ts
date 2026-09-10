@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { SYSTEM_FORMAT } from "./config";
 import { json, toSSE, UpstreamError, type ChatRequest } from "./http";
+import { debugRecord } from "./debug";
 import { toToritsuInput, toChatCompletion, selectMessages } from "./translate";
 
 export const WEBUI_API_URL =
@@ -74,6 +75,7 @@ export async function handleWebuiChat(
     model: sessionModel,
     token,
   });
+  debugRecord("webui_upstream", { model: sessionModel, content: result.content });
   const completion = toChatCompletion(req.model, {
     message: result.content,
     response: { conversation: { id: result.hid } },

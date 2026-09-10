@@ -1,5 +1,6 @@
 import { TORITSU_API_URL, KEY_FILE, SYSTEM_FORMAT, getApiKey } from "./config";
 import { json, toSSE, UpstreamError, type ChatRequest } from "./http";
+import { debugRecord } from "./debug";
 import {
   toToritsuInput,
   toChatCompletion,
@@ -38,6 +39,7 @@ export async function callPublicUpstream(
     throw new UpstreamError(502, "upstream unreachable", "upstream_unreachable");
   }
   const data = (await upstream.json().catch(() => null)) as PublicResult["data"] | null;
+  debugRecord("public_upstream", { input, status: upstream.status, body: data });
   if (!upstream.ok) {
     if (upstream.status === 401 && KEY_FILE) {
       console.error(`[toritsu-openai] 401 from upstream - key may be expired, refresh ${KEY_FILE}`);

@@ -3,6 +3,7 @@
 // 実行はクライアント側（pi等）が担い、プロキシは実行しない。
 import { SYSTEM_FORMAT, getApiKey } from "./config";
 import { json, toSSE, UpstreamError, type ChatRequest } from "./http";
+import { debugLevel, debugRecord } from "./debug";
 import { callPublicUpstream } from "./public";
 import { loadSessionToken, sendWebuiMessage, WEBUI_MODELS } from "./webui";
 import {
@@ -85,7 +86,7 @@ export async function handleAgentChat(
     req.conversationId,
   );
   const input = shrinkInput(toToritsuInput(messages, SYSTEM_FORMAT, preamble));
-  if (process.env.TORITSU_DEBUG === "1") {
+  if (debugLevel() !== "off") {
     const toolChars = req.messages
       .filter((m) => m.role === "tool")
       .reduce((n, m) => n + JSON.stringify(m.content ?? "").length, 0);
@@ -93,6 +94,7 @@ export async function handleAgentChat(
       `[toritsu-openai] agent input_len=${input.length} tool_chars=${toolChars} turns=${req.messages.length}`,
     );
   }
+  debugRecord("agent_upstream_input", { input });
 
   const sendOnce = async (): Promise<{
     text: string;
@@ -147,6 +149,7 @@ export async function handleAgentChat(
   let cid = req.conversationId;
   let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   ({ text, cid, usage } = await sendOnce());
+  debugRecord("agent_upstream_output", { text, cid });
   const parsed = parseAssistantOutput(text);
   if (parsed.type === "tool_calls") {
     const completion = toChatCompletion(req.model, {

@@ -5,6 +5,7 @@ import { handlePublicChat } from "./public";
 import { handleWebuiChat, WEBUI_MODELS } from "./webui";
 import { handleAgentChat } from "./agent";
 import { checkSession, saveSessionToken } from "./webui";
+import { debugRecord } from "./debug";
 import type { ChatMessage } from "./translate";
 
 if (process.argv.includes("--login")) {
@@ -83,6 +84,14 @@ app.post("/v1/chat/completions", async (c) => {
     conversationId: typeof body.conversation_id === "string" ? body.conversation_id : "",
   };
   const tools = Array.isArray(body.tools) ? (body.tools as unknown[]) : [];
+  debugRecord("client_request", {
+    model,
+    stream: req.stream,
+    conversationId: req.conversationId,
+    messages: req.messages,
+    tools,
+    tool_choice: body.tool_choice ?? null,
+  });
 
   try {
     // tools付きはモデル問わず翻訳を試みる。呼出しが出なければ直接回答にフォールバックする

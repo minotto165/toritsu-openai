@@ -105,6 +105,14 @@ pi --provider toritsu --model toritsu-reasoning
 TORITSU_KEY_FILE=~/.config/toritsu-openai/key bun run src/index.ts
 ```
 
+## デバッグ
+
+```sh
+TORITSU_DEBUG=full bun run src/index.ts
+```
+
+`~/.config/toritsu-openai/debug.log` に生ログ（クライアント要求・上流送受信）を1行JSONで保存します。秘密値は `[REDACTED]` に置換されますが、会話内容・ファイル内容は含まれるため取扱注意です。保存先は `TORITSU_DEBUG_FILE` で変更できます。
+
 ## 環境変数
 
 | 変数                                   | 説明                                                   |
@@ -113,7 +121,7 @@ TORITSU_KEY_FILE=~/.config/toritsu-openai/key bun run src/index.ts
 | `TORITSU_SESSION`                      | WebUIのセッショントークン（`--login` 保存よりenv優先） |
 | `PORT`                                 | 待受ポート（既定3000）                                 |
 | `TORITSU_API_URL`                      | 上流URLの上書き（テスト用）                            |
-| `TORITSU_DEBUG`                        | `1` でエージェント入力の内訳をログ出力                 |
+| `TORITSU_DEBUG`                        | `1` でサイズ内訳をログ出力、`full` で生ログ保存      |
 
 ## 制約
 
