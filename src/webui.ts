@@ -68,30 +68,22 @@ export async function handleWebuiChat(
   if (token === "") {
     throw new UpstreamError(500, "session mode requires login — run with --login", "server_error");
   }
-  try {
-    const result = await sendWebuiMessage({
-      input: toToritsuInput(selectMessages(req.messages, req.conversationId), SYSTEM_FORMAT),
-      hid: req.conversationId,
-      model: sessionModel,
-      token,
-    });
-    const completion = toChatCompletion(req.model, {
-      message: result.content,
-      response: { conversation: { id: result.hid } },
-    });
-    return req.stream ? toSSE(completion) : json(completion, 200);
-  } catch (err) {
-    if (err instanceof Error && err.message.startsWith("session expired")) {
-      console.error("[toritsu-openai] session expired — run with --login");
-      throw new UpstreamError(401, err.message, "authentication_error");
-    }
-    throw err;
-  }
+  const result = await sendWebuiMessage({
+    input: toToritsuInput(selectMessages(req.messages, req.conversationId), SYSTEM_FORMAT),
+    hid: req.conversationId,
+    model: sessionModel,
+    token,
+  });
+  const completion = toChatCompletion(req.model, {
+    message: result.content,
+    response: { conversation: { id: result.hid } },
+  });
+  return req.stream ? toSSE(completion) : json(completion, 200);
 }
 
 export function adaptSessionResponse(data: unknown): SessionResult {
   if (data === null || typeof data !== "object") {
-    throw new Error("invalid session response");
+    throw new UpstreamError(502, "invalid session response", "toritsu_api_error");
   }
   const record = data as Record<string, unknown>;
   const msg = record.message as { content?: unknown } | undefined;

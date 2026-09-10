@@ -113,6 +113,7 @@ TORITSU_KEY_FILE=~/.config/toritsu-openai/key bun run src/index.ts
 | `TORITSU_SESSION`                      | WebUIのセッショントークン（`--login` 保存よりenv優先） |
 | `PORT`                                 | 待受ポート（既定3000）                                 |
 | `TORITSU_API_URL`                      | 上流URLの上書き（テスト用）                            |
+| `TORITSU_DEBUG`                        | `1` でエージェント入力の内訳をログ出力                 |
 
 ## 制約
 
