@@ -14,7 +14,7 @@ import {
 } from "./translate";
 
 /** 自前の軽量system。tool変数とは別の独立変数として保持し、先頭に付与する */
-const DEFAULT_AGENT_IDENTITY = "You are a helpful coding assistant.";
+const DEFAULT_AGENT_IDENTITY = "You are a helpful coding assistant. Always respond in the user's language.";
 
 export function agentIdentity(): string {
   const custom = (process.env.TORITSU_AGENT_SYSTEM ?? "").trim();
