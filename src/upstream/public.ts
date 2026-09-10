@@ -1,15 +1,10 @@
-import { TORITSU_API_URL, KEY_FILE, SYSTEM_FORMAT, getApiKey } from "./config";
-import { json, toSSE, UpstreamError, type ChatRequest } from "./http";
-import { debugRecord } from "./debug";
-import {
-  toToritsuInput,
-  toChatCompletion,
-  upstreamErrorMessage,
-  selectMessages,
-} from "./translate";
+import { TORITSU_API_URL, KEY_FILE, getApiKey } from "../infra/config";
+import { UpstreamError } from "../infra/http";
+import { debugRecord } from "../infra/debug";
+import { upstreamErrorMessage, type ToritsuResponse } from "../text/translate";
 
 export interface PublicResult {
-  data: Parameters<typeof toChatCompletion>[1];
+  data: ToritsuResponse;
   message: string;
   conversationId: string;
 }
@@ -57,20 +52,4 @@ export async function callPublicUpstream(
   const msg = typeof data.message === "string" ? data.message : "";
   const id = data.response?.conversation?.id;
   return { data, message: msg, conversationId: typeof id === "string" ? id : "" };
-}
-
-/** 通常チャット：公開Endpointにそのまま中継する */
-export async function handlePublicChat(req: ChatRequest): Promise<Response> {
-  const apiKey = getApiKey();
-  if (!apiKey) {
-    throw new UpstreamError(
-      500,
-      "TORITSU_API_KEY or TORITSU_KEY_FILE is not set",
-      "server_error",
-    );
-  }
-  const input = toToritsuInput(selectMessages(req.messages, req.conversationId), SYSTEM_FORMAT);
-  const pub = await callPublicUpstream(input, req.conversationId, apiKey);
-  const completion = toChatCompletion(req.model, pub.data);
-  return req.stream ? toSSE(completion) : json(completion, 200);
 }

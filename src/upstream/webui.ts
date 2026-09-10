@@ -1,17 +1,13 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { SYSTEM_FORMAT } from "./config";
-import { json, toSSE, UpstreamError, type ChatRequest } from "./http";
-import { debugRecord } from "./debug";
-import { toToritsuInput, toChatCompletion, selectMessages } from "./translate";
+import { writeFileSync } from "node:fs";
+import { SESSION_FILE, ensureConfigDir, readSessionFile } from "../infra/config";
+import { UpstreamError } from "../infra/http";
+import { debugRecord } from "../infra/debug";
+
 
 export const WEBUI_API_URL =
   "https://ai-api.metro.tokyo.lg.jp/api/v1/chat/message";
 const WEBUI_STATUS_URL =
   "https://ai-api.metro.tokyo.lg.jp/api/v1/chat/tool/status";
-const CONFIG_DIR = join(homedir(), ".config", "toritsu-openai");
-const SESSION_FILE = join(CONFIG_DIR, "session");
 
 /** セッショントークンを読む（env優先、なければ0600ファイル）。値は返却のみで出力しない */
 export function loadSessionToken(): string {
@@ -19,16 +15,12 @@ export function loadSessionToken(): string {
   if (env !== undefined && env.trim() !== "") {
     return env.trim();
   }
-  try {
-    return readFileSync(SESSION_FILE, "utf-8").trim();
-  } catch {
-    return "";
-  }
+  return readSessionFile();
 }
 
 /** セッショントークンを0600で保存する */
 export function saveSessionToken(token: string): void {
-  mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  ensureConfigDir();
   writeFileSync(SESSION_FILE, `${token.trim()}\n`, { mode: 0o600 });
 }
 
@@ -58,29 +50,6 @@ export async function checkSession(token: string): Promise<boolean> {
 export interface SessionResult {
   content: string;
   hid: string;
-}
-
-/** セッションチャット：WebUIと同じWebUI Endpointを使う */
-export async function handleWebuiChat(
-  req: ChatRequest,
-  sessionModel: string,
-): Promise<Response> {
-  const token = loadSessionToken();
-  if (token === "") {
-    throw new UpstreamError(500, "session mode requires login — run with --login", "server_error");
-  }
-  const result = await sendWebuiMessage({
-    input: toToritsuInput(selectMessages(req.messages, req.conversationId), SYSTEM_FORMAT),
-    hid: req.conversationId,
-    model: sessionModel,
-    token,
-  });
-  debugRecord("webui_upstream", { model: sessionModel, content: result.content });
-  const completion = toChatCompletion(req.model, {
-    message: result.content,
-    response: { conversation: { id: result.hid } },
-  });
-  return req.stream ? toSSE(completion) : json(completion, 200);
 }
 
 export function adaptSessionResponse(data: unknown): SessionResult {

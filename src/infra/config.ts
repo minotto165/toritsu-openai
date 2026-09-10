@@ -1,5 +1,7 @@
-import { readFileSync, watch } from "node:fs";
-import type { SystemFormat } from "./translate";
+import { mkdirSync, readFileSync, watch } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import type { SystemFormat } from "../text/translate";
 
 export const TORITSU_API_URL =
   process.env.TORITSU_API_URL ?? "https://ai-api.metro.tokyo.lg.jp/api/v1/public/message";
@@ -46,4 +48,21 @@ if (KEY_FILE) {
 
 export function getApiKey(): string {
   return currentApiKey;
+}
+
+const CONFIG_DIR = join(homedir(), ".config", "toritsu-openai");
+export const SESSION_FILE = join(CONFIG_DIR, "session");
+
+/** セッションファイルの読込。なければ空文字 */
+export function readSessionFile(): string {
+  try {
+    return readFileSync(SESSION_FILE, "utf-8").trim();
+  } catch {
+    return "";
+  }
+}
+
+/** 設定ディレクトリの確保（0700） */
+export function ensureConfigDir(): void {
+  mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
 }

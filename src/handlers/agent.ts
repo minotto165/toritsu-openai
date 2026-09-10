@@ -1,26 +1,26 @@
 // エージェント翻訳：クライアントの tools 定義をテキスト指示に変換し、
 // モデルが出した tool_calls JSON をそのままクライアントに返す。
 // 実行はクライアント側（pi等）が担い、プロキシは実行しない。
-import { SYSTEM_FORMAT, getApiKey } from "./config";
-import { json, toSSE, UpstreamError, type ChatRequest } from "./http";
-import { debugLevel, debugRecord } from "./debug";
-import { callPublicUpstream } from "./public";
-import { loadSessionToken, sendWebuiMessage, WEBUI_MODELS } from "./webui";
+import { SYSTEM_FORMAT } from "../infra/config";
+import { json, toSSE, type ChatRequest } from "../infra/http";
+import { debugLevel, debugRecord } from "../infra/debug";
+import { sendUpstream } from "../upstream/sender";
 import {
   toToritsuInput,
   toChatCompletion,
   parseAssistantOutput,
   selectMessages,
-} from "./translate";
+} from "../text/translate";
 
 /** 自前の軽量system。tool変数とは別の独立変数として保持し、先頭に付与する */
-const DEFAULT_AGENT_IDENTITY = "You are a helpful coding assistant. Always respond in the user's language.";
+const DEFAULT_AGENT_IDENTITY = "You are a helpful coding assistant.";
 
 export function agentIdentity(): string {
   const custom = (process.env.TORITSU_AGENT_SYSTEM ?? "").trim();
   return custom !== "" ? custom : DEFAULT_AGENT_IDENTITY;
 }
 
+/** 入力上限対策：先頭（規約文）を残し、古い履歴側を削る */
 const INPUT_BUDGET = 18000;
 const HEAD_KEEP = 2000;
 
@@ -48,7 +48,7 @@ export function agentToolPreamble(tools: unknown[]): string {
     const params = fn.parameters !== undefined ? JSON.stringify(fn.parameters) : "{}";
     return `- ${name}: ${desc} (parameters: ${params})`;
   });
-  return `You are a request converter. Convert the user request below into exactly one tool-call JSON object per turn and nothing else. Do not answer it directly.
+  return `${agentIdentity()}\nYou are a request converter. Convert the user request below into exactly one tool-call JSON object per turn and nothing else. Do not answer it directly.
 The tool_calls array MUST contain exactly one call. An empty array is a format violation.
 Refusing with phrases like "cannot access" or "not available" is a format violation.\nIf no tool is needed (greetings, chit-chat, general knowledge), output {"answer": "..."} instead.
 Do NOT use web search.
@@ -66,25 +66,21 @@ export function agentResultPreamble(tools: unknown[] = []): string {
     return typeof fn.name === "string" ? fn.name : `tool_${i}`;
   });
   const available = names.length > 0 ? `\nAvailable functions: ${names.join(", ")}` : "";
-  return `Use the tool results below. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty). Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).${available}`;
+  return `${agentIdentity()}\nUse the tool results below. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty). Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).${available}`;
 }
 
 /**
  * エージェントチャット：tools定義をテキスト指示に変換し、モデルが出した
  * tool_calls JSON をそのまま返す。呼出しが出なければ直接回答として返す。
- * モデル名で送信先を決める：webuiモデルはセッションEndpoint、それ以外は公開Endpoint。
  */
 export async function handleAgentChat(
   req: ChatRequest,
   tools: unknown[],
 ): Promise<Response> {
-  const webuiModel = WEBUI_MODELS[req.model as keyof typeof WEBUI_MODELS];
-  // 末尾roleで判定：tool結果直後だけ回答許可、それ以外（新規user等）は呼出し強要に戻す。
-  // 履歴全体のsome()だと一度でもtoolを使うと以降ずっと結果ターンになり、
-  // 「ここ直して」がtoolレスポンス扱いで直書き返答される。
+  // 末尾roleで判定：tool結果直後だけ回答許可、それ以外は呼出し強要に戻す
   const lastMsg = req.messages.length > 0 ? req.messages[req.messages.length - 1] : undefined;
   const isToolResultTurn = lastMsg !== undefined && lastMsg.role === "tool";
-  const preamble = `${agentIdentity()}\n${isToolResultTurn ? agentResultPreamble(tools) : agentToolPreamble(tools)}`;
+  const preamble = isToolResultTurn ? agentResultPreamble(tools) : agentToolPreamble(tools);
   // クライアントのsystemは捨てる：API提供ツール前提の記述が
   // テキスト指示と矛盾し、モデルが実行を拒む原因になるため。
   // 継続ターンは最新1件のみ送る（上流が履歴を保持しているため）
@@ -103,65 +99,13 @@ export async function handleAgentChat(
   }
   debugRecord("agent_upstream_input", { input });
 
-  const sendOnce = async (): Promise<{
-    text: string;
-    cid: string;
-    usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
-  }> => {
-    if (webuiModel !== undefined) {
-      const token = loadSessionToken();
-      if (token === "") {
-        throw new UpstreamError(
-          500,
-          "session mode requires login — run with --login",
-          "server_error",
-        );
-      }
-      const r = await sendWebuiMessage({
-        input,
-        hid: req.conversationId,
-        model: webuiModel,
-        token,
-      });
-      return {
-        text: r.content,
-        cid: r.hid,
-        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-      };
-    }
-    const apiKey = getApiKey();
-    if (!apiKey) {
-      throw new UpstreamError(
-        500,
-        "TORITSU_API_KEY or TORITSU_KEY_FILE is not set",
-        "server_error",
-      );
-    }
-    const r = await callPublicUpstream(input, req.conversationId, apiKey);
-    const u = r.data.response?.usage;
-    const num = (v: unknown): number => (typeof v === "number" ? v : 0);
-    return {
-      text: r.message,
-      cid: r.conversationId,
-      usage: {
-        prompt_tokens: num(u?.input_tokens),
-        completion_tokens: num(u?.output_tokens),
-        total_tokens: num(u?.total_tokens),
-      },
-    };
-  };
-
-  // 呼出しターンと結果ターンで1往復ずつ送信する。再試行はしない
-  let text = "";
-  let cid = req.conversationId;
-  let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-  ({ text, cid, usage } = await sendOnce());
-  debugRecord("agent_upstream_output", { text, cid });
-  const parsed = parseAssistantOutput(text);
+  const r = await sendUpstream(req, input);
+  debugRecord("agent_upstream_output", { text: r.text, cid: r.cid });
+  const parsed = parseAssistantOutput(r.text);
   if (parsed.type === "tool_calls") {
     const completion = toChatCompletion(req.model, {
       message: "",
-      response: { conversation: { id: cid } },
+      response: { conversation: { id: r.cid } },
     });
     const choice = completion.choices[0];
     if (choice !== undefined) {
@@ -173,13 +117,13 @@ export async function handleAgentChat(
       }));
       choice.finish_reason = "tool_calls";
     }
-    completion.usage = usage;
+    completion.usage = r.usage;
     return req.stream ? toSSE(completion) : json(completion, 200);
   }
   const completion = toChatCompletion(req.model, {
     message: parsed.text,
-    response: { conversation: { id: cid } },
+    response: { conversation: { id: r.cid } },
   });
-  completion.usage = usage;
+  completion.usage = r.usage;
   return req.stream ? toSSE(completion) : json(completion, 200);
 }

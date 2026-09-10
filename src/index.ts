@@ -1,12 +1,11 @@
 import { Hono } from "hono";
-import { PORT } from "./config";
-import { invalidRequest, toErrorJson, UpstreamError, type ChatRequest } from "./http";
-import { handlePublicChat } from "./public";
-import { handleWebuiChat, WEBUI_MODELS } from "./webui";
-import { handleAgentChat } from "./agent";
-import { checkSession, saveSessionToken } from "./webui";
-import { debugRecord } from "./debug";
-import type { ChatMessage } from "./translate";
+import { PORT } from "./infra/config";
+import { invalidRequest, toErrorJson, UpstreamError, type ChatRequest } from "./infra/http";
+import { handleChat } from "./handlers/chat";
+import { handleAgentChat } from "./handlers/agent";
+import { checkSession, saveSessionToken } from "./upstream/webui";
+import { debugRecord } from "./infra/debug";
+import type { ChatMessage } from "./text/translate";
 
 if (process.argv.includes("--login")) {
   await runLogin();
@@ -58,10 +57,8 @@ async function runLogin(): Promise<void> {
 const app = new Hono();
 
 /**
- * モデル名で振分ける薄いルーター。各モデルは必ず有効な行き先を持つ。
- * - tools付き → 翻訳を試みる（呼出しが出なければ直接回答）
- * - toritsu-fast / toritsu-reasoning → セッションEndpoint（要ログイン）
- * - それ以外 → 通常チャット（公開Endpoint）
+ * 薄いルーター：tools付きは翻訳、なければ通常チャット。
+ * 送信先の選択は sender に委譲する。
  */
 app.post("/v1/chat/completions", async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
@@ -94,15 +91,10 @@ app.post("/v1/chat/completions", async (c) => {
   });
 
   try {
-    // tools付きはモデル問わず翻訳を試みる。呼出しが出なければ直接回答にフォールバックする
     if (tools.length > 0 && body.tool_choice !== "none") {
       return await handleAgentChat(req, tools);
     }
-    const webuiModel = WEBUI_MODELS[model as keyof typeof WEBUI_MODELS];
-    if (webuiModel !== undefined) {
-      return await handleWebuiChat(req, webuiModel);
-    }
-    return await handlePublicChat(req);
+    return await handleChat(req);
   } catch (err) {
     if (err instanceof UpstreamError) {
       return toErrorJson(err);

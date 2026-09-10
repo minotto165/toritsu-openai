@@ -1,8 +1,7 @@
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { getApiKey } from "./config";
-import { loadSessionToken } from "./webui";
+import { getApiKey, readSessionFile } from "./config";
 
 export type DebugLevel = "off" | "sizes" | "full";
 
@@ -42,7 +41,7 @@ function collectSecrets(): string[] {
   push(process.env.TORITSU_API_KEY);
   push(process.env.TORITSU_SESSION);
   push(getApiKey());
-  push(loadSessionToken());
+  push(readSessionFile());
   return out;
 }
 

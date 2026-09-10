@@ -1,4 +1,4 @@
-import type { ChatCompletion, ChatMessage } from "./translate";
+import type { ChatCompletion, ChatMessage } from "../text/translate";
 
 /** ハンドラ間で受け渡す正規化済みリクエスト */
 export interface ChatRequest {

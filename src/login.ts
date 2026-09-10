@@ -1,5 +1,5 @@
 import { chromium } from "playwright-core";
-import { checkSession, saveSessionToken } from "./webui";
+import { checkSession, saveSessionToken } from "./upstream/webui";
 
 const LOGIN_URL = "https://ai.metro.tokyo.lg.jp/";
 const TOKEN_KEY = "auth._token.local";
