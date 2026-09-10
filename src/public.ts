@@ -5,8 +5,6 @@ import {
   toChatCompletion,
   upstreamErrorMessage,
   selectMessages,
-  hasToolHistory,
-  RELEASE_PREAMBLE,
 } from "./translate";
 
 export interface PublicResult {
@@ -69,9 +67,7 @@ export async function handlePublicChat(req: ChatRequest): Promise<Response> {
       "server_error",
     );
   }
-  // tool履歴のある素のターンは形式検査の残滓を解除する
-  const release = hasToolHistory(req.messages) ? RELEASE_PREAMBLE : undefined;
-  const input = toToritsuInput(selectMessages(req.messages, req.conversationId), SYSTEM_FORMAT, release);
+  const input = toToritsuInput(selectMessages(req.messages, req.conversationId), SYSTEM_FORMAT);
   const pub = await callPublicUpstream(input, req.conversationId, apiKey);
   const completion = toChatCompletion(req.model, pub.data);
   return req.stream ? toSSE(completion) : json(completion, 200);
