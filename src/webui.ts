@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { SYSTEM_FORMAT } from "./config";
 import { json, toSSE, UpstreamError, type ChatRequest } from "./http";
-import { toToritsuInput, toChatCompletion, selectMessages } from "./translate";
+import { toToritsuInput, toChatCompletion, selectMessages, hasToolHistory, RELEASE_PREAMBLE } from "./translate";
 
 export const WEBUI_API_URL =
   "https://ai-api.metro.tokyo.lg.jp/api/v1/chat/message";
@@ -70,7 +70,11 @@ export async function handleWebuiChat(
   }
   try {
     const result = await sendWebuiMessage({
-      input: toToritsuInput(selectMessages(req.messages, req.conversationId), SYSTEM_FORMAT),
+      input: toToritsuInput(
+        selectMessages(req.messages, req.conversationId),
+        SYSTEM_FORMAT,
+        hasToolHistory(req.messages) ? RELEASE_PREAMBLE : undefined,
+      ),
       hid: req.conversationId,
       model: sessionModel,
       token,

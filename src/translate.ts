@@ -25,6 +25,15 @@ function capToolText(s: string): string {
   return `${s.slice(0, TOOL_CONTENT_CAP)}\n...[truncated ${s.length - TOOL_CONTENT_CAP} chars]`;
 }
 
+/** 過去にtoolのやり取りがあるか。ある場合、素のターンでも形式検査の残滓を解除する必要がある */
+export function hasToolHistory(messages: ChatMessage[]): boolean {
+  return messages.some((m) => m.role === "tool" || m.tool_calls !== undefined);
+}
+
+/** 形式検査モードの解除文。素のターンで過去の指示を引きずらせない */
+export const RELEASE_PREAMBLE =
+  "system: Format check is over. Answer the user's latest question normally as plain text. Ignore prior output-format instructions.";
+
 /**
  * 送信対象メッセージの選択。上流は conversation_id で履歴を保持しているため、
  * 継続ターンでは system＋最新の1件だけ送れば足りる（入力肥大の根本対策）。
