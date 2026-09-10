@@ -111,7 +111,7 @@ TORITSU_KEY_FILE=~/.config/toritsu-openai/key bun run src/index.ts
 TORITSU_DEBUG=full bun run src/index.ts
 ```
 
-`~/.config/toritsu-openai/debug.log` に生ログ（クライアント要求・上流送受信）を1行JSONで保存します。秘密値は `[REDACTED]` に置換されますが、会話内容・ファイル内容は含まれるため取扱注意です。保存先は `TORITSU_DEBUG_FILE` で変更できます。
+`~/.config/toritsu-openai/debug.log` に生ログ（クライアント要求・上流送受信）を1行JSONで保存します。秘密値は `[REDACTED]` に置換されますが、会話内容・ファイル内容は含まれるため取扱注意です。保存先は `TORITSU_DEBUG_FILE` で、`TORITSU_DEBUG_STDOUT=1` で標準出力にも同時表示できます。
 
 ## 環境変数
 
