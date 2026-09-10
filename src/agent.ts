@@ -41,7 +41,7 @@ export function agentToolPreamble(tools: unknown[]): string {
     const params = fn.parameters !== undefined ? JSON.stringify(fn.parameters) : "{}";
     return `- ${name}: ${desc} (parameters: ${params})`;
   });
-  return `system: You are a request converter. Convert the user request below into exactly one tool-call JSON object per turn and nothing else. Do not answer it directly.
+  return `You are a request converter. Convert the user request below into exactly one tool-call JSON object per turn and nothing else. Do not answer it directly.
 The tool_calls array MUST contain exactly one call. An empty array is a format violation.
 Refusing with phrases like "cannot access" or "not available" is a format violation.\nIf no tool is needed (greetings, chit-chat, general knowledge), output {"answer": "..."} instead.
 Do NOT use web search.
@@ -59,7 +59,7 @@ export function agentResultPreamble(tools: unknown[] = []): string {
     return typeof fn.name === "string" ? fn.name : `tool_${i}`;
   });
   const available = names.length > 0 ? `\nAvailable functions: ${names.join(", ")}` : "";
-  return `system: Use the tool results below. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty). Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).${available}`;
+  return `Use the tool results below. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty). Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).${available}`;
 }
 
 /**
