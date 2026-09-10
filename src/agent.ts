@@ -13,7 +13,15 @@ import {
   selectMessages,
 } from "./translate";
 
-/** クライアントの tools 定義をそのまま埋め込んだ指示文を作る */
+/** 自前の軽量system。tool変数とは別の独立変数として保持し、先頭に付与する */
+const DEFAULT_AGENT_IDENTITY =
+  "You are a helpful coding assistant. Always respond in the user's language (Japanese by default).";
+
+export function agentIdentity(): string {
+  const custom = (process.env.TORITSU_AGENT_SYSTEM ?? "").trim();
+  return custom !== "" ? custom : DEFAULT_AGENT_IDENTITY;
+}
+
 const INPUT_BUDGET = 18000;
 const HEAD_KEEP = 2000;
 
@@ -77,7 +85,7 @@ export async function handleAgentChat(
   // 「ここ直して」がtoolレスポンス扱いで直書き返答される。
   const lastMsg = req.messages.length > 0 ? req.messages[req.messages.length - 1] : undefined;
   const isToolResultTurn = lastMsg !== undefined && lastMsg.role === "tool";
-  const preamble = isToolResultTurn ? agentResultPreamble(tools) : agentToolPreamble(tools);
+  const preamble = `${agentIdentity()}\n${isToolResultTurn ? agentResultPreamble(tools) : agentToolPreamble(tools)}`;
   // クライアントのsystemは捨てる：API提供ツール前提の記述が
   // テキスト指示と矛盾し、モデルが実行を拒む原因になるため。
   // 継続ターンは最新1件のみ送る（上流が履歴を保持しているため）
