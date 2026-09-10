@@ -1,3 +1,4 @@
+// デバッグ記録（秘密値は置換）
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
@@ -5,7 +6,8 @@ import { getApiKey, readSessionFile } from "./config";
 
 export type DebugLevel = "off" | "sizes" | "full";
 
-/** TORITSU_DEBUG=1(sizes) / full(payloadまで保存) */
+// デバッグ記録（秘密値は置換）: TORITSU_DEBUG=1(sizes)/full(payload保存)
+/** デバッグ水準の解決 */
 export function debugLevel(): DebugLevel {
   const v = (process.env.TORITSU_DEBUG ?? "").trim().toLowerCase();
   if (v === "full" || v === "payload" || v === "2") {
@@ -27,7 +29,7 @@ function debugFile(): string {
 
 const LINE_CAP = 32000;
 
-/** 秘密値の収集。ログ記録直前に毎回取得する */
+/** 秘密値の収集 */
 function collectSecrets(): string[] {
   const out: string[] = [];
   const push = (v: string | undefined | null) => {
@@ -45,10 +47,7 @@ function collectSecrets(): string[] {
   return out;
 }
 
-/**
- * 生ログを1行JSONで保存する。秘密値は [REDACTED] に置換する。
- * 保存失敗はサーブに影響させない。debugLevel()!=="full" のときは何もしない。
- */
+/** 生ログを1行JSONで保存する（失敗時は無視、full時のみ） */
 export function debugRecord(event: string, data: Record<string, unknown>): void {
   if (debugLevel() !== "full") {
     return;
@@ -70,6 +69,6 @@ export function debugRecord(event: string, data: Record<string, unknown>): void 
       console.log(`[debug] ${line}`);
     }
   } catch {
-    // 保存失敗は無視する
+    // ignore
   }
 }

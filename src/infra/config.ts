@@ -1,3 +1,4 @@
+// 環境変数・キー・設定ファイルの管理
 import { mkdirSync, readFileSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -51,7 +52,7 @@ export function getApiKey(): string {
 const CONFIG_DIR = join(homedir(), ".config", "toritsu-openai");
 export const SESSION_FILE = join(CONFIG_DIR, "session");
 
-/** セッションファイルの読込。なければ空文字 */
+/** セッションファイル読込（なければ空文字） */
 export function readSessionFile(): string {
   try {
     return readFileSync(SESSION_FILE, "utf-8").trim();
@@ -60,7 +61,7 @@ export function readSessionFile(): string {
   }
 }
 
-/** 設定ディレクトリの確保（0700） */
+/** 設定dir確保（0700） */
 export function ensureConfigDir(): void {
   mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
 }

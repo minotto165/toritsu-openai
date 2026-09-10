@@ -1,3 +1,4 @@
+// モデル名で送信先を選ぶ統一送信口
 import { getApiKey } from "../infra/config";
 import { UpstreamError, type ChatRequest } from "../infra/http";
 import { callPublicUpstream } from "./public";
@@ -11,11 +12,8 @@ export interface SendResult {
 
 const ZERO_USAGE = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
-/**
- * モデル名で送信先を決めて1往復する。
- * webuiモデルはセッションEndpoint、それ以外は公開Endpoint。
- * 失敗時は UpstreamError を投げる。
- */
+// モデル名で送信先を選ぶ統一送信口
+/** webuiモデルはセッション、それ以外は公開へ1往復 */
 export async function sendUpstream(
   req: Pick<ChatRequest, "model" | "conversationId">,
   input: string,

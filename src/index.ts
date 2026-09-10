@@ -1,3 +1,4 @@
+// エントリポイント：薄いルーター＋--login
 import { Hono } from "hono";
 import { PORT } from "./infra/config";
 import { invalidRequest, toErrorJson, UpstreamError, type ChatRequest } from "./infra/http";
@@ -12,12 +13,8 @@ if (process.argv.includes("--login")) {
   process.exit(0);
 }
 
-/**
- * セッションログイン：Chromeを自動で開き、ユーザーの手動ログイン後に
- * localStorage のトークンを自動で抜き出して保存する。
- * Chromeが使えない場合のみ手動貼付けにフォールバックする。
- * 学校アカウントの認証情報自体は扱わない。
- */
+// エントリポイント：薄いルーター＋--login
+/** --login：実Chromeで手動ログイン後にトークンを自動取得（学校認証情報は扱わない） */
 async function runLogin(): Promise<void> {
   console.log("=== toritsu-openai session login ===");
   console.log("注意: 保存されるのは都立AIのセッショントークンです。");
@@ -56,10 +53,7 @@ async function runLogin(): Promise<void> {
 
 const app = new Hono();
 
-/**
- * 薄いルーター：tools付きは翻訳、なければ通常チャット。
- * 送信先の選択は sender に委譲する。
- */
+/** tools付きは翻訳、なければ通常チャット（送信先はsenderが決定） */
 app.post("/v1/chat/completions", async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
     model?: unknown;

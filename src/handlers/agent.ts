@@ -1,6 +1,4 @@
-// エージェント翻訳：クライアントの tools 定義をテキスト指示に変換し、
-// モデルが出した tool_calls JSON をそのままクライアントに返す。
-// 実行はクライアント側（pi等）が担い、プロキシは実行しない。
+// 翻訳ハンドラ：tools指示化→tool_calls返却（実行はクライアント側）
 import { getApiKey } from "../infra/config";
 import { json, toSSE, type ChatRequest } from "../infra/http";
 import { debugLevel, debugRecord } from "../infra/debug";
@@ -12,7 +10,7 @@ import {
   selectMessages,
 } from "../text/translate";
 
-/** 自前の軽量system。tool変数とは別の独立変数として保持し、先頭に付与する */
+/** 自前軽量system（先頭付与・独立変数） */
 const DEFAULT_AGENT_IDENTITY = "You are a helpful coding assistant.";
 
 export function agentIdentity(): string {
@@ -20,7 +18,7 @@ export function agentIdentity(): string {
   return custom !== "" ? custom : DEFAULT_AGENT_IDENTITY;
 }
 
-/** 入力上限対策：先頭（規約文）を残し、古い履歴側を削る */
+/** 入力上限対策（先頭保持・古い側を削減） */
 const INPUT_BUDGET = 18000;
 const HEAD_KEEP = 2000;
 
@@ -34,7 +32,7 @@ export function shrinkInput(input: string): string {
   );
 }
 
-/** クライアントの tools 定義をそのまま埋め込んだ指示文を作る */
+/** tools定義→指示文 */
 export function agentToolPreamble(tools: unknown[]): string {
   const defs = tools.map((t, i) => {
     const o = (t ?? {}) as { type?: unknown; function?: unknown };
@@ -58,7 +56,7 @@ ${defs.join("\n")}
 Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only, escape newlines, no prose outside JSON.`;
 }
 
-/** 結果受領ターン用：回答許可＋追加呼出し継続の両立 */
+/** 結果ターン用指示 */
 export function agentResultPreamble(tools: unknown[] = []): string {
   const names = tools.map((t, i) => {
     const o = (t ?? {}) as { function?: unknown };
@@ -81,9 +79,7 @@ export async function handleAgentChat(
   const lastMsg = req.messages.length > 0 ? req.messages[req.messages.length - 1] : undefined;
   const isToolResultTurn = lastMsg !== undefined && lastMsg.role === "tool";
   const preamble = isToolResultTurn ? agentResultPreamble(tools) : agentToolPreamble(tools);
-  // クライアントのsystemは捨てる：API提供ツール前提の記述が
-  // テキスト指示と矛盾し、モデルが実行を拒む原因になるため。
-  // 継続ターンは最新1件のみ送る（上流が履歴を保持しているため）
+  // system除去（矛盾防止）＋最新1件のみ送信
   const messages = selectMessages(
     req.messages.filter((m) => m.role !== "system"),
     req.conversationId,

@@ -1,3 +1,4 @@
+// 公開Endpointへの送信
 import { TORITSU_API_URL, KEY_FILE, getApiKey } from "../infra/config";
 import { UpstreamError } from "../infra/http";
 import { debugRecord } from "../infra/debug";
@@ -9,7 +10,8 @@ export interface PublicResult {
   conversationId: string;
 }
 
-/** 公開Endpointへの送信を1往復する。失敗時は UpstreamError を投げる */
+// 公開Endpointへの送信
+/** 1往復送信。失敗時は UpstreamError */
 export async function callPublicUpstream(
   input: string,
   cid: string,
@@ -20,13 +22,13 @@ export async function callPublicUpstream(
     upstream = await fetch(TORITSU_API_URL, {
       method: "POST",
       headers: {
-        // 上流は Accept-Encoding なしのリクエストを401で拒否するため必須
+        // Accept-Encoding なしは401になるため必須
         Accept: "application/json",
         "Accept-Encoding": "gzip, deflate",
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
-      // 上流は {input, conversation_id} 以外のトップレベル field を401で拒否するため厳密にこの2つのみ送る
+      // 余分なfieldは401になるため厳密に2つのみ
       body: JSON.stringify({ input, conversation_id: cid }),
       signal: AbortSignal.timeout(60_000),
     });

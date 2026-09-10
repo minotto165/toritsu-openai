@@ -1,3 +1,4 @@
+// 応答整形・エラー型・正規化リクエスト
 import type { ChatCompletion, ChatMessage } from "../text/translate";
 
 /** ハンドラ間で受け渡す正規化済みリクエスト */
@@ -42,11 +43,7 @@ export function toErrorJson(err: UpstreamError): Response {
   return json({ error: e }, err.status);
 }
 
-/**
- * 疑似SSE：上流は一括応答のみのため、全文をチャンク分割して
- * OpenAI形式の chat.completion.chunk ストリームとして返す。
- * tool_calls の場合は構造化deltaとして1発で流す。
- */
+/** 疑似SSE：一括応答をチャンク分割して配信する */
 export function toSSE(completion: ChatCompletion): Response {
   const choice = completion.choices[0];
   const base = {

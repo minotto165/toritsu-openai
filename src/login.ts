@@ -1,3 +1,4 @@
+// --login：実Chromeで手動ログイン後にトークン自動取得
 import { chromium } from "playwright-core";
 import { checkSession, saveSessionToken } from "./upstream/webui";
 
@@ -10,11 +11,8 @@ function stripBearer(raw: string): string {
   return raw.replace(/^Bearer\s+/i, "").trim();
 }
 
-/**
- * 自動ログイン：実Chromeを立ち上げ、ユーザーが手動ログインするのを待ち、
- * localStorage のセッショントークンを自動で抜き出して保存する。
- * パスワード等には触らない。Chromeがなければ false を返し手動方式に切替える。
- */
+// --login の実処理：実ChromeのlocalStorageからトークンを自動取得
+/** 手動ログイン待ち→取得→保存。Chromeなしはfalse */
 export async function autoLogin(): Promise<boolean> {
   let browser;
   try {

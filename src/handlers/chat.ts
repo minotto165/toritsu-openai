@@ -1,8 +1,10 @@
+// 通常チャットハンドラ
 import { json, toSSE, type ChatRequest } from "../infra/http";
 import { toToritsuInput, toChatCompletion, selectMessages } from "../text/translate";
 import { sendUpstream } from "../upstream/sender";
 
-/** 通常チャット：入力を畳んで送信し、OpenAI形式で返す */
+// 通常チャットハンドラ
+/** 畳んで送信しOpenAI形式で返す */
 export async function handleChat(req: ChatRequest): Promise<Response> {
   const input = toToritsuInput(selectMessages(req.messages, req.conversationId));
   const r = await sendUpstream(req, input);

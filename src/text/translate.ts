@@ -1,4 +1,4 @@
-// OpenAI messages[] <-> Toritsu AI input 変換
+// OpenAI形式と都立AI形式の相互変換
 
 export interface ChatMessage {
   role: string;
@@ -12,7 +12,7 @@ function toText(content: unknown): string {
   return typeof content === "string" ? content : JSON.stringify(content);
 }
 
-/** tool実行結果の上限。超過分は切詰め表示にする（上流2万文字制限対策） */
+/** tool結果の上限（超過は切詰め） */
 const TOOL_CONTENT_CAP = 4000;
 
 function capToolText(s: string): string {
@@ -22,11 +22,7 @@ function capToolText(s: string): string {
   return `${s.slice(0, TOOL_CONTENT_CAP)}\n...[truncated ${s.length - TOOL_CONTENT_CAP} chars]`;
 }
 
-/**
- * 送信対象メッセージの選択。上流は conversation_id で履歴を保持しているため、
- * 継続ターンでは system＋最新の1件だけ送れば足りる（入力肥大の根本対策）。
- * 新規スレッド（conversation_id 空）では全件送る。
- */
+/** 送信対象の選択：新規は全件、継続はsystem＋最新1件（上流が履歴保持のため） */
 export function selectMessages(messages: ChatMessage[], conversationId: string): ChatMessage[] {
   if (conversationId === "") {
     return messages;
@@ -43,13 +39,7 @@ export function selectMessages(messages: ChatMessage[], conversationId: string):
   return [...systems, last];
 }
 
-/**
- * OpenAI messages[] を都立AIの input 文字列1本に畳む。
- * system role は全て抽出して文頭ブロック化し、残りを "role: content" 行で連結する。
- * role:tool のメッセージはツール実行結果として "tool: ..." 行にする。
- * assistant の tool_calls は文脈維持のためJSON行として残す。
- * extraSystem があれば system ブロックに追記する（エージェント規約用）。
- */
+/** messages[] を input 文字列1本に畳む（system文頭化・tool行化） */
 export function toToritsuInput(messages: ChatMessage[], extraSystem?: string): string {
   const systems = messages.filter((m) => m.role === "system");
   const rest = messages.filter((m) => m.role !== "system");
@@ -91,7 +81,7 @@ export interface ToritsuResponse {
   errors?: Record<string, unknown>;
 }
 
-/** 上流エラー応答から表示用メッセージを抜き出す */
+/** 上流エラーの表示文抽出 */
 export function upstreamErrorMessage(data: ToritsuResponse | null): string {
   if (data === null || typeof data !== "object") {
     return "upstream error";
@@ -135,13 +125,13 @@ export interface ChatCompletion {
   created: number;
   model: string;
   choices: ChatCompletionChoice[];
-  /** 上流がトークン数を返すため実測値をマッピング（欠落時のみゼロ） */
+  /** 実測トークン数のマッピング */
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
-  /** 非標準の付加フィールド：上流の conversation.id をそのまま返す */
+  /** 付加field：上流conversation.id */
   conversation_id: string;
 }
 
-/** 都立AIの応答を OpenAI chat.completion 形式に変換する */
+/** 上流応答→chat.completion 変換 */
 export function toChatCompletion(model: string, data: ToritsuResponse): ChatCompletion {
   const conversationId = data.response?.conversation?.id;
   const upstreamUsage = data.response?.usage;
@@ -189,17 +179,14 @@ function extractJson(text: string): unknown | null {
     return null;
   }
   const sliced = candidate.slice(start, end + 1);
-  // モデルが文字列内に生の改行等を混ぜた不正JSONを返すことがあるため、
-  // 厳密パース失敗時は制御文字をエスケープして再試行する
+  // 不正JSON対策：制御文字をエスケープして再試行
   return (
     tryParse(sliced) ??
     tryParse(sliced.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t"))
   );
 }
 
-/**
- * モデルのテキスト応答を tool_calls / 最終回答に振り分ける。
- */
+/** 応答テキストを tool_calls / 回答に振り分ける */
 export function parseAssistantOutput(text: string): ParsedOutput {
   const obj = extractJson(text);
   if (obj !== null && typeof obj === "object") {
@@ -224,7 +211,7 @@ export function parseAssistantOutput(text: string): ParsedOutput {
       return { type: "answer", text: answer };
     }
   }
-  // 不正JSON救済：{"answer": "..."} の形だけ寛容に抜き出す
+  // {"answer": ...} 形式の救済抽出
   const trimmed = text.trim();
   if (trimmed.startsWith("{") || trimmed.startsWith("```")) {
     const m = text.match(/"answer"\s*:\s*"([\s\S]*)"\s*\}\s*(```\s*)?$/);
