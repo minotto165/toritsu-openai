@@ -1,7 +1,7 @@
 // エージェント翻訳：クライアントの tools 定義をテキスト指示に変換し、
 // モデルが出した tool_calls JSON をそのままクライアントに返す。
 // 実行はクライアント側（pi等）が担い、プロキシは実行しない。
-import { SYSTEM_FORMAT } from "../infra/config";
+import { getApiKey } from "../infra/config";
 import { json, toSSE, type ChatRequest } from "../infra/http";
 import { debugLevel, debugRecord } from "../infra/debug";
 import { sendUpstream } from "../upstream/sender";
@@ -88,7 +88,7 @@ export async function handleAgentChat(
     req.messages.filter((m) => m.role !== "system"),
     req.conversationId,
   );
-  const input = shrinkInput(toToritsuInput(messages, SYSTEM_FORMAT, preamble));
+  const input = shrinkInput(toToritsuInput(messages, preamble));
   if (debugLevel() !== "off") {
     const toolChars = req.messages
       .filter((m) => m.role === "tool")

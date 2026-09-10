@@ -1,12 +1,10 @@
 import { mkdirSync, readFileSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { SystemFormat } from "../text/translate";
 
 export const TORITSU_API_URL =
   process.env.TORITSU_API_URL ?? "https://ai-api.metro.tokyo.lg.jp/api/v1/public/message";
 export const PORT = Number(process.env.PORT ?? "3000");
-export const SYSTEM_FORMAT: SystemFormat = process.env.TORITSU_SYSTEM_FORMAT === "b" ? "b" : "a";
 export const KEY_FILE = process.env.TORITSU_KEY_FILE;
 
 let currentApiKey = process.env.TORITSU_API_KEY ?? "";

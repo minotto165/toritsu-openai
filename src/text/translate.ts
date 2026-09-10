@@ -8,9 +8,6 @@ export interface ChatMessage {
   name?: unknown;
 }
 
-/** systemブロックの畳み込み形式。a: system行のまま先頭配置 / b: 【システム指示】ヘッダー化 */
-export type SystemFormat = "a" | "b";
-
 function toText(content: unknown): string {
   return typeof content === "string" ? content : JSON.stringify(content);
 }
@@ -53,11 +50,7 @@ export function selectMessages(messages: ChatMessage[], conversationId: string):
  * assistant の tool_calls は文脈維持のためJSON行として残す。
  * extraSystem があれば system ブロックに追記する（エージェント規約用）。
  */
-export function toToritsuInput(
-  messages: ChatMessage[],
-  format: SystemFormat = "a",
-  extraSystem?: string,
-): string {
+export function toToritsuInput(messages: ChatMessage[], extraSystem?: string): string {
   const systems = messages.filter((m) => m.role === "system");
   const rest = messages.filter((m) => m.role !== "system");
   const lines = rest.map((m) => {
@@ -76,9 +69,6 @@ export function toToritsuInput(
   }
   if (sysTexts.length === 0) {
     return lines.join("\n");
-  }
-  if (format === "b") {
-    return `【システム指示】\n${sysTexts.join("\n")}\n\n【会話】\n${lines.join("\n")}`;
   }
   const sysLines = sysTexts.map((t) => `system: ${t}`);
   return [...sysLines, ...lines].join("\n");
