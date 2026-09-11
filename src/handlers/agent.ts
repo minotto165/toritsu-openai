@@ -19,7 +19,8 @@ export function agentIdentity(): string {
   return custom !== "" ? custom : DEFAULT_AGENT_IDENTITY;
 }
 
-/** 入力上限対策（先頭保持・古い側を削減） */
+/** 保持するクライアントsystemの上限。超過分は捨てる（機構部を守るため） */
+const KEPT_SYSTEM_CAP = 3000;
 const INPUT_BUDGET = 18000;
 const HEAD_KEEP = 2000;
 
@@ -141,14 +142,18 @@ export async function handleAgentChat(
   // 末尾roleで判定：tool結果直後だけ回答許可、それ以外は呼出し強要に戻す
   const lastMsg = req.messages.length > 0 ? req.messages[req.messages.length - 1] : undefined;
   const isToolResultTurn = lastMsg !== undefined && lastMsg.role === "tool";
-  // クライアントsystemはtool記述部だけ除去して活かす
-  const keptSystem = rewriteClientSystem(
+  // クライアントsystemはtool記述部だけ除去して活かす。
+  // 巨大systemは機構部を守るため先頭3000文字に切る
+  const keptRaw = rewriteClientSystem(
     req.messages
       .filter((m) => m.role === "system")
       .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content))),
   );
+  const keptSystem =
+    keptRaw.length > KEPT_SYSTEM_CAP ? `${keptRaw.slice(0, KEPT_SYSTEM_CAP)}\n...[system truncated]` : keptRaw;
   const preambleBody = isToolResultTurn ? agentResultPreamble(tools) : agentToolPreamble(tools);
-  const preamble = keptSystem !== "" ? `${keptSystem}\n${preambleBody}` : preambleBody;
+  // 機構部を先に置く（縮小時に守られる順序）
+  const preamble = `${preambleBody}${keptSystem !== "" ? `\n${keptSystem}` : ""}`;
   // 継続ターンは最新1件のみ送る（上流が履歴を保持しているため）
   const messages = selectMessages(
     req.messages.filter((m) => m.role !== "system"),
