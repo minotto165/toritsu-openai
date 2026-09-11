@@ -53,6 +53,17 @@ async function runLogin(): Promise<void> {
 
 const app = new Hono();
 
+const MODELS = ["toritsu", "toritsu-fast", "toritsu-reasoning"];
+
+/** モデル一覧。カタログ自動取得するクライアント向けの固定リスト */
+app.get("/v1/models", (c) => {
+  const now = Math.floor(Date.now() / 1000);
+  return c.json({
+    object: "list",
+    data: MODELS.map((id) => ({ id, object: "model", created: now, owned_by: "toritsu-openai" })),
+  });
+});
+
 /** tools付きは翻訳、なければ通常チャット（送信先はsenderが決定） */
 app.post("/v1/chat/completions", async (c) => {
   const body = (await c.req.json().catch(() => null)) as {
