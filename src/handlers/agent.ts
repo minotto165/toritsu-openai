@@ -85,17 +85,25 @@ function stripToolBlocks(t: string): string {
       }
       continue;
     }
-    // (2) toolに言及する見出し＋配下の箇条書き
+    // (2) tool定義を含む見出し＋配下のみ除去する。
+    // 定義形状（- 名前: 説明）がない行動規範（例：Tool usage policy）は残す
     if (/^\s*#{1,4}\s+.*\btools?\b/i.test(line)) {
-      i++;
+      let j = i + 1;
+      let hasDef = false;
       while (
-        i < lines.length &&
-        ((lines[i] as string).trim() === "" ||
-          /^\s*([-*]\s+|\d+[.)]\s+|>|\s)/.test(lines[i] as string))
+        j < lines.length &&
+        ((lines[j] as string).trim() === "" ||
+          /^\s*([-*]\s+|\d+[.)]\s+|>|\s)/.test(lines[j] as string))
       ) {
-        i++;
+        if (/^\s*[-*]\s*`?[A-Za-z_][\w-]*`?\s*:/.test(lines[j] as string)) {
+          hasDef = true;
+        }
+        j++;
       }
-      continue;
+      if (hasDef) {
+        i = j;
+        continue;
+      }
     }
     out.push(line);
     i++;
