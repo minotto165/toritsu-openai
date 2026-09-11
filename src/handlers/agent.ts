@@ -8,6 +8,7 @@ import {
   toChatCompletion,
   parseAssistantOutput,
   selectMessages,
+  getTruncationStats,
 } from "../text/translate";
 
 /** 自前軽量system（先頭付与・独立変数） */
@@ -22,14 +23,16 @@ export function agentIdentity(): string {
 const INPUT_BUDGET = 18000;
 const HEAD_KEEP = 2000;
 
-export function shrinkInput(input: string): string {
+export function shrinkInput(input: string): { text: string; cut: number } {
   if (input.length <= INPUT_BUDGET) {
-    return input;
+    return { text: input, cut: 0 };
   }
-  return (
-    `${input.slice(0, HEAD_KEEP)}\n...[omitted ${input.length - INPUT_BUDGET} chars of older tool output]...\n` +
-    input.slice(input.length - (INPUT_BUDGET - HEAD_KEEP))
-  );
+  return {
+    text:
+      `${input.slice(0, HEAD_KEEP)}\n...[omitted ${input.length - INPUT_BUDGET} chars of older tool output]...\n` +
+      input.slice(input.length - (INPUT_BUDGET - HEAD_KEEP)),
+    cut: input.length - INPUT_BUDGET,
+  };
 }
 
 /** 呼出しターンの固定文（tools定義を間に挟んで組み立てる） */
@@ -90,13 +93,15 @@ export async function handleAgentChat(
     req.messages.filter((m) => m.role !== "system"),
     req.conversationId,
   );
-  const input = shrinkInput(toToritsuInput(messages, preamble));
+  const shrunk = shrinkInput(toToritsuInput(messages, preamble));
+  const input = shrunk.text;
   if (debugLevel() !== "off") {
     const toolChars = req.messages
       .filter((m) => m.role === "tool")
       .reduce((n, m) => n + JSON.stringify(m.content ?? "").length, 0);
+    const trunc = getTruncationStats();
     console.log(
-      `[toritsu-openai] agent input_len=${input.length} tool_chars=${toolChars} turns=${req.messages.length}`,
+      `[toritsu-openai] agent input_len=${input.length} tool_chars=${toolChars} turns=${req.messages.length} trunc_tool=${trunc.toolCuts}:${trunc.toolCutChars} trunc_shrink=${shrunk.cut}`,
     );
   }
   debugRecord("agent_upstream_input", { input });

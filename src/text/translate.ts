@@ -15,10 +15,28 @@ function toText(content: unknown): string {
 /** tool結果の上限（超過は切詰め） */
 const TOOL_CONTENT_CAP = 4000;
 
+export interface TruncationStats {
+  toolCuts: number;
+  toolCutChars: number;
+}
+
+let truncStats: TruncationStats = { toolCuts: 0, toolCutChars: 0 };
+
+/** 切詰め統計のリセット（toToritsuInputの先頭で呼ぶ） */
+export function resetTruncationStats(): void {
+  truncStats = { toolCuts: 0, toolCutChars: 0 };
+}
+
+export function getTruncationStats(): TruncationStats {
+  return { ...truncStats };
+}
+
 function capToolText(s: string): string {
   if (s.length <= TOOL_CONTENT_CAP) {
     return s;
   }
+  truncStats.toolCuts += 1;
+  truncStats.toolCutChars += s.length - TOOL_CONTENT_CAP;
   return `${s.slice(0, TOOL_CONTENT_CAP)}\n...[truncated ${s.length - TOOL_CONTENT_CAP} chars]`;
 }
 
@@ -41,6 +59,7 @@ export function selectMessages(messages: ChatMessage[], conversationId: string):
 
 /** messages[] を input 文字列1本に畳む（system文頭化・tool行化） */
 export function toToritsuInput(messages: ChatMessage[], extraSystem?: string): string {
+  resetTruncationStats();
   const systems = messages.filter((m) => m.role === "system");
   const rest = messages.filter((m) => m.role !== "system");
   const lines = rest.map((m) => {
