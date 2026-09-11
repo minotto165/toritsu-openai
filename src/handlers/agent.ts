@@ -51,11 +51,15 @@ const RESULT_HEAD = `Use the tool results below. If you have enough information,
 
 /** クライアントsystemのtool記述部だけを除去し、残りを活かす */
 export function rewriteClientSystem(texts: string[]): string {
-  return texts
-    .map(stripToolBlocks)
+  const joined = texts
     .map((s) => s.trim())
     .filter((s) => s !== "")
     .join("\n\n");
+  // pi製のsystemに限定する。それ以外は無加工で通す
+  if (!/operating inside pi/i.test(joined)) {
+    return joined;
+  }
+  return stripToolBlocks(joined);
 }
 
 function stripToolBlocks(t: string): string {
