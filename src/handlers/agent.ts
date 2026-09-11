@@ -39,12 +39,13 @@ export function shrinkInput(input: string): { text: string; cut: number } {
 /** 呼出しターンの固定文（tools定義を間に挟んで組み立てる） */
 const CALL_HEAD = `You are a request converter. Convert the user request below into exactly one tool-call JSON object per turn and nothing else. Do not answer it directly.
 The tool_calls array MUST contain exactly one call. An empty array is a format violation.
-Refusing with phrases like "cannot access" or "not available" is a format violation.\nIf no tool is needed (greetings, chit-chat, general knowledge), output {"answer": "..."} instead.
+If no tool is needed (greetings, chit-chat, general knowledge), output {"answer": "..."} instead.
 Do NOT use web search.
 Prefer scoped commands (specific files, ≤200 lines). Avoid dumping node_modules, .git, or lockfiles.
 Functions you may call (JSON schemas):`;
 
 const CALL_TAIL = `Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only: escape newlines as \\n, escape every " as \\", never use \\'. No prose outside JSON.`;
+const RESULT_FALLBACK = `If a further call is impossible, provide complete copy-paste-ready code instead of lecturing about permissions. Code only, minimal explanation.`;
 
 /** 結果ターンの固定文（末尾に利用可能関数名を付加する） */
 const RESULT_HEAD = `Use the tool results below. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty). Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).`;
@@ -140,7 +141,7 @@ export function agentResultPreamble(tools: unknown[] = []): string {
     return typeof fn.name === "string" ? fn.name : `tool_${i}`;
   });
   const available = names.length > 0 ? `\nAvailable functions: ${names.join(", ")}` : "";
-  return `${agentIdentity()}\n${RESULT_HEAD}${available}`;
+  return `${agentIdentity()}\n${RESULT_HEAD}${available}\n${RESULT_FALLBACK}`;
 }
 
 /**
