@@ -48,6 +48,60 @@ const CALL_TAIL = `Output format: {"tool_calls": [{"id": "call_1", "name": "<one
 /** 結果ターンの固定文（末尾に利用可能関数名を付加する） */
 const RESULT_HEAD = `Use the tool results below. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty). Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).`;
 
+/** クライアントsystemのtool記述部だけを除去し、残りを活かす */
+export function rewriteClientSystem(texts: string[]): string {
+  return texts
+    .map(stripToolBlocks)
+    .map((s) => s.trim())
+    .filter((s) => s !== "")
+    .join("\n\n");
+}
+
+function stripToolBlocks(t: string): string {
+  const lines = t.split("\n");
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i] as string;
+    // (1) "Available tools" 見出し＋続く箇条書き＋tool言及パラグラフ
+    if (/^\s*#{0,4}\s*available tools\s*:?\s*$/i.test(line)) {
+      i++;
+      while (i < lines.length && /^\s*([-*]\s+|\d+[.)]\s+)/.test(lines[i] as string)) {
+        i++;
+      }
+      // 空行を跨いで続くtool言及パラグラフも除去する
+      while (i < lines.length) {
+        const l = lines[i] as string;
+        if (l.trim() === "") {
+          i++;
+          continue;
+        }
+        if (/tool/i.test(l)) {
+          i++;
+          continue;
+        }
+        break;
+      }
+      continue;
+    }
+    // (2) toolに言及する見出し＋配下の箇条書き
+    if (/^\s*#{1,4}\s+.*\btools?\b/i.test(line)) {
+      i++;
+      while (
+        i < lines.length &&
+        ((lines[i] as string).trim() === "" ||
+          /^\s*([-*]\s+|\d+[.)]\s+|>|\s)/.test(lines[i] as string))
+      ) {
+        i++;
+      }
+      continue;
+    }
+    out.push(line);
+    i++;
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
 /** tools定義→指示文 */
 export function agentToolPreamble(tools: unknown[]): string {
   const defs = tools.map((t, i) => {
@@ -87,8 +141,15 @@ export async function handleAgentChat(
   // 末尾roleで判定：tool結果直後だけ回答許可、それ以外は呼出し強要に戻す
   const lastMsg = req.messages.length > 0 ? req.messages[req.messages.length - 1] : undefined;
   const isToolResultTurn = lastMsg !== undefined && lastMsg.role === "tool";
-  const preamble = isToolResultTurn ? agentResultPreamble(tools) : agentToolPreamble(tools);
-  // system除去（矛盾防止）＋最新1件のみ送信
+  // クライアントsystemはtool記述部だけ除去して活かす
+  const keptSystem = rewriteClientSystem(
+    req.messages
+      .filter((m) => m.role === "system")
+      .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content))),
+  );
+  const preambleBody = isToolResultTurn ? agentResultPreamble(tools) : agentToolPreamble(tools);
+  const preamble = keptSystem !== "" ? `${keptSystem}\n${preambleBody}` : preambleBody;
+  // 継続ターンは最新1件のみ送る（上流が履歴を保持しているため）
   const messages = selectMessages(
     req.messages.filter((m) => m.role !== "system"),
     req.conversationId,
