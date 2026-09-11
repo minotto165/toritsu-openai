@@ -6,7 +6,8 @@ Bun + Hono + TypeScriptで作成
 
 ## 前提
 
-- 都立AIのAPIキーが必要です（有効期限・利用回数に上限あり）。[こちらのページ](https://ai.metro.tokyo.lg.jp/chat/public-api)で取得してください。
+- 都立AIのAPIキーが必要です。[こちらのページ](https://ai.metro.tokyo.lg.jp/chat/public-api)で取得してください。
+- 都立AIは都立高校およびその他の都立学校の生徒および教職員のみが利用できます。
 
 ## クイックスタート
 
@@ -46,7 +47,7 @@ second = client.chat.completions.create(
 | `toritsu-reasoning` | 推論モデル   | ログイン |
 
 ```sh
-# ログイン（WebUIモデル用、1回だけ。Chromeが開くのでログインするだけ）
+# ログイン（WebUIモデル用、1回だけ。Chromeが開くのでログイン）
 bun run src/index.ts --login
 pi -p "..." --provider toritsu --model toritsu-reasoning
 ```
