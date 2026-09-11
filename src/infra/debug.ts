@@ -27,7 +27,28 @@ function debugFile(): string {
   return join(homedir(), ".config", "toritsu-openai", "debug.log");
 }
 
-const LINE_CAP = 32000;
+const STR_CAP = 8000;
+
+/** 文字列フィールドを事前に丸める（ stringify 後の切断はJSONを壊すため） */
+function truncateDeep(v: unknown): unknown {
+  if (typeof v === "string") {
+    if (v.length <= STR_CAP) {
+      return v;
+    }
+    return `${Array.from(v).slice(0, STR_CAP).join("")}...[truncated ${v.length - STR_CAP} chars]`;
+  }
+  if (Array.isArray(v)) {
+    return v.map(truncateDeep);
+  }
+  if (v !== null && typeof v === "object") {
+    const o: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      o[k] = truncateDeep(val);
+    }
+    return o;
+  }
+  return v;
+}
 
 /** 秘密値の収集 */
 function collectSecrets(): string[] {
@@ -53,14 +74,15 @@ export function debugRecord(event: string, data: Record<string, unknown>): void 
     return;
   }
   try {
-    let line = JSON.stringify({ t: new Date().toISOString(), event, ...data });
+    let line = JSON.stringify({
+      t: new Date().toISOString(),
+      event,
+      ...(truncateDeep(data) as Record<string, unknown>),
+    });
     for (const s of collectSecrets()) {
       if (line.includes(s)) {
         line = line.split(s).join("[REDACTED]");
       }
-    }
-    if (line.length > LINE_CAP) {
-      line = `${line.slice(0, LINE_CAP)}...[truncated ${line.length - LINE_CAP} chars]`;
     }
     const file = debugFile();
     mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
