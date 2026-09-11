@@ -32,6 +32,19 @@ export function shrinkInput(input: string): string {
   );
 }
 
+/** 呼出しターンの固定文（tools定義を間に挟んで組み立てる） */
+const CALL_HEAD = `You are a request converter. Convert the user request below into exactly one tool-call JSON object per turn and nothing else. Do not answer it directly.
+The tool_calls array MUST contain exactly one call. An empty array is a format violation.
+Refusing with phrases like "cannot access" or "not available" is a format violation.\nIf no tool is needed (greetings, chit-chat, general knowledge), output {"answer": "..."} instead.
+Do NOT use web search.
+Prefer scoped commands (specific files, ≤200 lines). Avoid dumping node_modules, .git, or lockfiles.
+Functions you may call (JSON schemas):`;
+
+const CALL_TAIL = `Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only, escape newlines, no prose outside JSON.`;
+
+/** 結果ターンの固定文（末尾に利用可能関数名を付加する） */
+const RESULT_HEAD = `Use the tool results below. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty). Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).`;
+
 /** tools定義→指示文 */
 export function agentToolPreamble(tools: unknown[]): string {
   const defs = tools.map((t, i) => {
@@ -46,14 +59,7 @@ export function agentToolPreamble(tools: unknown[]): string {
     const params = fn.parameters !== undefined ? JSON.stringify(fn.parameters) : "{}";
     return `- ${name}: ${desc} (parameters: ${params})`;
   });
-  return `${agentIdentity()}\nYou are a request converter. Convert the user request below into exactly one tool-call JSON object per turn and nothing else. Do not answer it directly.
-The tool_calls array MUST contain exactly one call. An empty array is a format violation.
-Refusing with phrases like "cannot access" or "not available" is a format violation.\nIf no tool is needed (greetings, chit-chat, general knowledge), output {"answer": "..."} instead.
-Do NOT use web search.
-Prefer scoped commands (specific files, ≤200 lines). Avoid dumping node_modules, .git, or lockfiles.
-Functions you may call (JSON schemas):
-${defs.join("\n")}
-Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only, escape newlines, no prose outside JSON.`;
+  return `${agentIdentity()}\n${CALL_HEAD}\n${defs.join("\n")}\n${CALL_TAIL}`;
 }
 
 /** 結果ターン用指示 */
@@ -64,7 +70,7 @@ export function agentResultPreamble(tools: unknown[] = []): string {
     return typeof fn.name === "string" ? fn.name : `tool_${i}`;
   });
   const available = names.length > 0 ? `\nAvailable functions: ${names.join(", ")}` : "";
-  return `${agentIdentity()}\nUse the tool results below. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty). Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).${available}`;
+  return `${agentIdentity()}\n${RESULT_HEAD}${available}`;
 }
 
 /**
