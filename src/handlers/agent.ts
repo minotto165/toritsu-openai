@@ -44,7 +44,7 @@ Do NOT use web search.
 Prefer scoped commands (specific files, ≤200 lines). Avoid dumping node_modules, .git, or lockfiles.
 Functions you may call (JSON schemas):`;
 
-const CALL_TAIL = `Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only: escape newlines as \\n, escape every " as \\", never use \\'. No prose outside JSON.`;
+const CALL_TAIL = `Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only: escape newlines as \\n, escape every " as \\", never use \\'. No prose outside JSON. The user copy-pastes your output to run it.`;
 const RESULT_FALLBACK = `If a further call is impossible, provide complete copy-paste-ready code instead of lecturing about permissions. Code only, minimal explanation.`;
 
 /** 結果ターンの固定文（末尾に利用可能関数名を付加する） */
