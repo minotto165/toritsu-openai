@@ -295,36 +295,50 @@ function extractSingleCall(text: string): { name: string; args: unknown } | null
   return { name, args };
 }
 
+/** objからtool_calls配列を取り出して正規化する。なければnull */
+function toToolCalls(obj: unknown): ParsedOutput["calls"] | null {
+  if (obj === null || typeof obj !== "object") {
+    return null;
+  }
+  const calls = (obj as { tool_calls?: unknown }).tool_calls;
+  if (!Array.isArray(calls) || calls.length === 0) {
+    return null;
+  }
+  const now = Date.now();
+  return calls.map((c: unknown, i: number) => {
+    const item = (c ?? {}) as {
+      id?: unknown;
+      name?: unknown;
+      arguments?: unknown;
+      function?: { name?: unknown; arguments?: unknown };
+    };
+    // ネイティブ形状 {type, function:{name, arguments}} も受付ける
+    const fn = item.function ?? {};
+    const name = item.name ?? fn.name;
+    const args = item.arguments ?? fn.arguments;
+    return {
+      id: typeof item.id === "string" ? item.id : `call_${now}_${i}`,
+      name: typeof name === "string" ? name : "unknown",
+      args: typeof args === "string" ? args : JSON.stringify(args ?? {}),
+    };
+  });
+}
+
 /** 応答テキストを tool_calls / 回答に振り分ける */
 export function parseAssistantOutput(text: string): ParsedOutput {
+  const fromObj = toToolCalls(extractJson(text));
+  if (fromObj !== null) {
+    return { type: "tool_calls", calls: fromObj };
+  }
   const obj = extractJson(text);
   if (obj !== null && typeof obj === "object") {
-    const calls = (obj as { tool_calls?: unknown }).tool_calls;
-    if (Array.isArray(calls) && calls.length > 0) {
-      const now = Date.now();
-      return {
-        type: "tool_calls",
-        calls: calls.map((c: unknown, i: number) => {
-          const item = (c ?? {}) as {
-            id?: unknown;
-            name?: unknown;
-            arguments?: unknown;
-            function?: { name?: unknown; arguments?: unknown };
-          };
-          // ネイティブ形状 {type, function:{name, arguments}} も受付ける
-          const fn = item.function ?? {};
-          const name = item.name ?? fn.name;
-          const args = item.arguments ?? fn.arguments;
-          return {
-            id: typeof item.id === "string" ? item.id : `call_${now}_${i}`,
-            name: typeof name === "string" ? name : "unknown",
-            args: typeof args === "string" ? args : JSON.stringify(args ?? {}),
-          };
-        }),
-      };
-    }
     const answer = (obj as { answer?: unknown }).answer;
     if (typeof answer === "string") {
+      // 二重封筒：answerの中にtool_calls JSONが入っている場合は剥がす
+      const inner = toToolCalls(extractJson(answer));
+      if (inner !== null) {
+        return { type: "tool_calls", calls: inner };
+      }
       return { type: "answer", text: answer };
     }
   }
