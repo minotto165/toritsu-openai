@@ -49,6 +49,8 @@ second = client.chat.completions.create(
 ```sh
 # ログイン（WebUIモデル用、1回だけ。Chromeが開くのでログイン）
 bun run src/index.ts --login
+# .envにTORITSU_MS_EMAIL/TORITSU_MS_PASSWORDを設定しておくとMSサインインを自動入力します
+# （失敗時はそのまま手動ログイン待ちに切り替わります）
 pi -p "..." --provider toritsu --model toritsu-reasoning
 ```
 

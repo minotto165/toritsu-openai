@@ -63,6 +63,7 @@ function collectSecrets(): string[] {
   };
   push(process.env.TORITSU_API_KEY);
   push(process.env.TORITSU_SESSION);
+  push(process.env.TORITSU_MS_PASSWORD);
   push(getApiKey());
   push(readSessionFile());
   return out;
