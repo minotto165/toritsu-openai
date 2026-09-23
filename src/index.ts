@@ -6,6 +6,7 @@ import { handleChat } from "./handlers/chat";
 import { handleAgentChat } from "./handlers/agent";
 import { checkSession, saveSessionToken } from "./upstream/webui";
 import { debugRecord } from "./infra/debug";
+import { logRequest } from "./infra/request_log";
 import type { ChatMessage } from "./text/translate";
 
 if (process.argv.includes("--login")) {
@@ -94,6 +95,7 @@ app.post("/v1/chat/completions", async (c) => {
     tools,
     tool_choice: body.tool_choice ?? null,
   });
+  logRequest(req, tools);
 
   try {
     if (tools.length > 0 && body.tool_choice !== "none") {

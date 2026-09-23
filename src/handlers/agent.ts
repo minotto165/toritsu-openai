@@ -1,14 +1,13 @@
 // 翻訳ハンドラ：tools指示化→tool_calls返却（実行はクライアント側）
 import { getApiKey } from "../infra/config";
 import { json, toSSE, type ChatRequest } from "../infra/http";
-import { debugLevel, debugRecord } from "../infra/debug";
+import { debugRecord } from "../infra/debug";
 import { sendUpstream } from "../upstream/sender";
 import {
   toToritsuInput,
   toChatCompletion,
   parseAssistantOutput,
   selectMessages,
-  getTruncationStats,
 } from "../text/translate";
 
 /** 自前軽量system（先頭付与・独立変数） */
@@ -174,15 +173,6 @@ export async function handleAgentChat(
   );
   const shrunk = shrinkInput(toToritsuInput(messages, preamble));
   const input = shrunk.text;
-  if (debugLevel() !== "off") {
-    const toolChars = req.messages
-      .filter((m) => m.role === "tool")
-      .reduce((n, m) => n + JSON.stringify(m.content ?? "").length, 0);
-    const trunc = getTruncationStats();
-    console.log(
-      `[toritsu-openai] agent input_len=${input.length} tool_chars=${toolChars} turns=${req.messages.length} trunc_tool=${trunc.toolCuts}:${trunc.toolCutChars} trunc_shrink=${shrunk.cut}`,
-    );
-  }
   debugRecord("agent_upstream_input", { input });
 
   const r = await sendUpstream(req, input);
