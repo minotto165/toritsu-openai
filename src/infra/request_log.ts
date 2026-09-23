@@ -4,7 +4,7 @@ import { logger } from "./logger";
 import type { ChatRequest } from "./http";
 
 /** 1リクエスト1行のstdoutサマリ。詳細ペイロードはdebug.log側 */
-export function logRequest(req: ChatRequest, tools: unknown[]): void {
+export function logRequest(req: ChatRequest, tools: unknown[], keyLabel = "open"): void {
   if (debugLevel() === "off") {
     return;
   }
@@ -14,6 +14,6 @@ export function logRequest(req: ChatRequest, tools: unknown[]): void {
     .filter((m) => m.role === "tool")
     .reduce((n, m) => n + chars(m.content), 0);
   logger.info(
-    `request model=${req.model} turns=${req.messages.length} msg_chars=${msgChars} tool_chars=${toolChars} tools=${tools.length}${req.conversationId !== "" ? " cont=1" : ""}`,
+    `request key=${keyLabel} model=${req.model} turns=${req.messages.length} msg_chars=${msgChars} tool_chars=${toolChars} tools=${tools.length}${req.conversationId !== "" ? " cont=1" : ""}`,
   );
 }

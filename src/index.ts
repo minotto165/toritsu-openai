@@ -1,18 +1,57 @@
 // エントリポイント：薄いルーター＋--login
 import { Hono } from "hono";
 import { PORT } from "./infra/config";
-import { invalidRequest, toErrorJson, UpstreamError, type ChatRequest } from "./infra/http";
+import { invalidRequest, toErrorJson, unauthorized, UpstreamError, type ChatRequest } from "./infra/http";
 import { handleChat } from "./handlers/chat";
 import { handleAgentChat } from "./handlers/agent";
 import { checkSession, saveSessionToken } from "./upstream/webui";
 import { debugRecord } from "./infra/debug";
 import { logger } from "./infra/logger";
 import { logRequest } from "./infra/request_log";
+import { proxyAuthEnabled, identifyProxyKey } from "./gateway/keys";
 import type { ChatMessage } from "./text/translate";
 
 if (process.argv.includes("--login")) {
   await runLogin();
   process.exit(0);
+}
+
+if (process.argv.includes("--issue-key") || process.argv.includes("--list-keys") || process.argv.includes("--revoke-key")) {
+  await runKeyAdmin();
+  process.exit(0);
+}
+
+/** プロキシキー管理CLI（サーバーは起動しない） */
+async function runKeyAdmin(): Promise<void> {
+  const { issueKey, loadProxyKeys, maskKey, revokeKey } = await import("./gateway/keys");
+  const args = process.argv;
+  const flagValue = (flag: string): string => {
+    const i = args.indexOf(flag);
+    return i >= 0 && i + 1 < args.length ? (args[i + 1] as string) : "";
+  };
+  if (args.includes("--issue-key")) {
+    const entry = issueKey(flagValue("--name"));
+    logger.info(`id: ${entry.id}`);
+    logger.info(`name: ${entry.name}`);
+    logger.info(`key: ${entry.key}`);
+    logger.warn("このキーは今だけ表示します。クライアントのapiKeyに設定してください。");
+    return;
+  }
+  if (args.includes("--revoke-key")) {
+    const revoked = revokeKey(flagValue("--revoke-key"));
+    if (revoked === null) {
+      logger.error("key not found (id完全一致 or キーprefixで指定)");
+      process.exit(1);
+    }
+    logger.info(`revoked ${revoked.id} (name: ${revoked.name})`);
+    return;
+  }
+  for (const e of loadProxyKeys()) {
+    logger.info(`${e.revoked ? "[revoked]" : "[active] "} ${e.id} name=${e.name} key=${maskKey(e.key)} created=${e.createdAt}`);
+  }
+  if (loadProxyKeys().length === 0) {
+    logger.info("no proxy keys (auth disabled, open access)");
+  }
 }
 
 // エントリポイント：薄いルーター＋--login
@@ -68,6 +107,17 @@ app.get("/v1/models", (c) => {
 
 /** tools付きは翻訳、なければ通常チャット（送信先はsenderが決定） */
 app.post("/v1/chat/completions", async (c) => {
+  // 有効キーが1件もなければ素通し（ローカル利用の互換維持）
+  let keyLabel = "open";
+  if (proxyAuthEnabled()) {
+    const bearer = (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "");
+    const entry = identifyProxyKey(bearer);
+    if (entry === null) {
+      logger.warn("rejected chat request with invalid proxy key");
+      return unauthorized();
+    }
+    keyLabel = entry.id;
+  }
   const body = (await c.req.json().catch(() => null)) as {
     model?: unknown;
     messages?: unknown;
@@ -96,7 +146,7 @@ app.post("/v1/chat/completions", async (c) => {
     tools,
     tool_choice: body.tool_choice ?? null,
   });
-  logRequest(req, tools);
+  logRequest(req, tools, keyLabel);
 
   try {
     if (tools.length > 0 && body.tool_choice !== "none") {
@@ -113,5 +163,6 @@ app.post("/v1/chat/completions", async (c) => {
 
 export default {
   port: PORT,
+  hostname: "127.0.0.1",
   fetch: app.fetch,
 };

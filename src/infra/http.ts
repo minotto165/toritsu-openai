@@ -9,15 +9,29 @@ export interface ChatRequest {
   conversationId: string;
 }
 
-export function json(obj: unknown, status: number): Response {
+export function json(obj: unknown, status: number, headers?: Record<string, string>): Response {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
   });
 }
 
 export function invalidRequest(message: string): Response {
   return json({ error: { message, type: "invalid_request_error" } }, 400);
+}
+
+/** OpenAI互換401（プロキシキー不正時） */
+export function unauthorized(): Response {
+  return json(
+    {
+      error: {
+        message: "Incorrect API key provided. Check your Authorization header.",
+        type: "invalid_request_error",
+        code: "invalid_api_key",
+      },
+    },
+    401,
+  );
 }
 
 export class UpstreamError extends Error {

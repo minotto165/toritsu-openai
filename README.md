@@ -108,6 +108,23 @@ pi --provider toritsu --model toritsu-reasoning
 TORITSU_KEY_FILE=~/.config/toritsu-openai/key bun run src/index.ts
 ```
 
+## プロキシキー制（公開する場合の必須設定）
+
+有効キーが1件もなければ無認証で素通しします（ローカル利用の互換維持）。
+`POST /v1/chat/completions` のみ保護し、`GET /v1/models` は公開のままです。
+サーバーは `127.0.0.1` のみで待受けます（Tunnel等は `http://localhost:3000` に向ける）。
+
+```sh
+# 発行（一覧・失効もCLIで可。サーバーは起動しない）
+bun run src/index.ts --issue-key --name pi-agent
+bun run src/index.ts --list-keys
+bun run src/index.ts --revoke-key <idまたはキーprefix>
+```
+
+クライアント側は発行したキーを `apiKey` に設定します。発行・失効はファイルのmtime監視で無再起動反映されます。保存先は `~/.config/toritsu-openai/proxy_keys.json`（0600、`TORITSU_PROXY_KEY_FILE` で変更可）。
+
+公開運用時は `TORITSU_DEBUG` を `off`（未設定）にしてください（`full` は会話内容を生ログ保存します）。
+
 ## デバッグ
 
 ```sh
@@ -122,9 +139,10 @@ TORITSU_DEBUG=full bun run src/index.ts
 | -------------------------------------- | ------------------------------------------------------ |
 | `TORITSU_API_KEY` / `TORITSU_KEY_FILE` | APIキー（直指定かファイルかどちらか）                  |
 | `TORITSU_SESSION`                      | WebUIのセッショントークン（`--login` 保存よりenv優先） |
-| `PORT`                                 | 待受ポート（既定3000）                                 |
+| `PORT`                                 | 待受ポート（既定3000、bindは127.0.0.1固定）            |
 | `TORITSU_API_URL`                      | 上流URLの上書き（テスト用）                            |
 | `TORITSU_DEBUG`                        | `1` でサイズ内訳をログ出力、`full` で生ログ保存      |
+| `TORITSU_PROXY_KEY_FILE`               | プロキシキー保存先（既定 `~/.config/toritsu-openai/proxy_keys.json`） |
 
 ## 制約
 

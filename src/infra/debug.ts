@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { getApiKey, readSessionFile } from "./config";
+import { activeProxyKeys } from "../gateway/keys";
 import { logger } from "./logger";
 
 export type DebugLevel = "off" | "sizes" | "full";
@@ -65,8 +66,12 @@ function collectSecrets(): string[] {
   push(process.env.TORITSU_API_KEY);
   push(process.env.TORITSU_SESSION);
   push(process.env.TORITSU_MS_PASSWORD);
+  push(process.env.TORITSU_ADMIN_KEY);
   push(getApiKey());
   push(readSessionFile());
+  for (const e of activeProxyKeys()) {
+    push(e.key);
+  }
   return out;
 }
 
