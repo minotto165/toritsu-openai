@@ -6,6 +6,9 @@ Bun + Hono + TypeScriptで作成
 
 ## クイックスタート
 
+まずAPIキー方式で始めます（手軽・まずはこちら）。制限に当たったら
+[次のステップ: ログイン方式](#次のステップ-ログイン方式)へ進んでください。
+
 ```sh
 bun install
 cp .env.example .env   # TORITSU_API_KEY にキーを貼る
@@ -29,16 +32,28 @@ curl -s -X POST http://localhost:3000/v1/chat/completions \
 
 ## モデル
 
-（fastとreasoningはログインが面倒だが、API制限は完全に突破できる）
+| model               | 動作         | 方式         |
+| ------------------- | ------------ | ------------ |
+| `toritsu`           | 通常チャット | APIキー方式（まずはこちら） |
+| `toritsu-fast`      | 高速モデル   | ログイン方式 |
+| `toritsu-reasoning` | 推論モデル   | ログイン方式 |
 
-| model               | 動作         | 要件     |
-| ------------------- | ------------ | -------- |
-| `toritsu`           | 通常チャット | APIキー  |
-| `toritsu-fast`      | 高速モデル   | ログイン |
-| `toritsu-reasoning` | 推論モデル   | ログイン |
+ログイン方式はAPI制限を完全に突破できますが、初回ログインが面倒です。
 
+### 次のステップ: ログイン方式
+
+APIキー方式には回数と時間あたりの利用制限があります。ログイン方式はその制限を受けないため、
+上限を気にせず使いたい場合はこちらに進んでください。
+
+WebUIモデル用、1回だけ実行します。Chromeが開くのでログインしてください。
 `.env` に `TORITSU_MS_EMAIL` / `TORITSU_MS_PASSWORD` を設定しておくと
-`--login` 時のMSサインインを自動入力します（失敗時は手動ログイン待ちに切替）。
+MSサインインを自動入力します（失敗時はそのまま手動ログイン待ちに切り替わります）。
+
+```sh
+bun run src/index.ts --login
+```
+
+ログイン後は[クライアント登録](#クライアント登録)で `toritsu-reasoning` を指定してください。
 
 ## クライアント登録
 
@@ -118,9 +133,9 @@ second = client.chat.completions.create(
 | --------------------------- | ----------------------- | -------------------------------------------------- |
 | `400 invalid_request_error` | `messages` 不正等       | リクエスト形状を見直す                             |
 | `400`（上流）               | 上流の1回あたり上限超過 | 入力を縮小する（継続ターンは最新のみ送信されます） |
-| `401 Authentication failed` | 上流キー失効（1~8時間） | キーを取り直して `TORITSU_KEY_FILE` を更新する     |
+| `401 Authentication failed` | APIキー方式のキー失効（1~8時間） | キーを取り直して `TORITSU_KEY_FILE` を更新する     |
 | `401 invalid_api_key`       | プロキシキー不一致      | 発行したキーで `Authorization: Bearer` を送る      |
-| `401 session expired`       | WebUIセッション失効     | `bun run src/index.ts --login` で取り直す          |
+| `401 session expired` | ログイン方式のセッション失効 | `bun run src/index.ts --login` で取り直す          |
 | `502`                       | 上流到達不可・応答不正  | 時間を置いて再試行する                             |
 
 ## 制約
