@@ -3,6 +3,7 @@ import { writeFileSync } from "node:fs";
 import { SESSION_FILE, ensureConfigDir, readSessionFile } from "../infra/config";
 import { UpstreamError } from "../infra/http";
 import { debugRecord } from "../infra/debug";
+import { logger } from "../infra/logger";
 
 
 export const WEBUI_API_URL =
@@ -97,7 +98,7 @@ export async function sendWebuiMessage(opts: {
   }
   if (!res.ok) {
     if (res.status === 401) {
-      console.error("[toritsu-openai] session expired — run with --login");
+      logger.warn("session expired — run with --login");
       throw new UpstreamError(
         401,
         "session expired — run with --login to re-authenticate",

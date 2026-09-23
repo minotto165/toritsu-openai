@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { getApiKey, readSessionFile } from "./config";
+import { logger } from "./logger";
 
 export type DebugLevel = "off" | "sizes" | "full";
 
@@ -89,7 +90,7 @@ export function debugRecord(event: string, data: Record<string, unknown>): void 
     mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
     appendFileSync(file, `${line}\n`, { mode: 0o600 });
     if ((process.env.TORITSU_DEBUG_STDOUT ?? "") === "1") {
-      console.log(`[debug] ${line}`);
+      logger.log(`[debug] ${line}`);
     }
   } catch {
     // ignore

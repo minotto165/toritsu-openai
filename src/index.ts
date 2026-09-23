@@ -6,6 +6,7 @@ import { handleChat } from "./handlers/chat";
 import { handleAgentChat } from "./handlers/agent";
 import { checkSession, saveSessionToken } from "./upstream/webui";
 import { debugRecord } from "./infra/debug";
+import { logger } from "./infra/logger";
 import { logRequest } from "./infra/request_log";
 import type { ChatMessage } from "./text/translate";
 
@@ -17,20 +18,20 @@ if (process.argv.includes("--login")) {
 // エントリポイント：薄いルーター＋--login
 /** --login：実Chromeで手動ログイン後にトークンを自動取得（学校認証情報は扱わない） */
 async function runLogin(): Promise<void> {
-  console.log("=== toritsu-openai session login ===");
-  console.log("注意: 保存されるのは都立AIのセッショントークンです。");
-  console.log("学校アカウント全体へのアクセスに繋がるため、他人と共有しないでください。");
-  console.log("");
+  logger.log("=== toritsu-openai session login ===");
+  logger.warn("注意: 保存されるのは都立AIのセッショントークンです。");
+  logger.warn("学校アカウント全体へのアクセスに繋がるため、他人と共有しないでください。");
+  logger.log("");
   const { autoLogin } = await import("./login");
   if (await autoLogin()) {
     return;
   }
-  console.log("");
-  console.log("--- 手動方式に切替えます ---");
-  console.log("1. ブラウザで都立AIにログインしてください。");
-  console.log("2. DevTools → Network で api/v1/chat/ へのリクエストを探します。");
-  console.log('3. Request Headers の authorization の値（"Bearer " を除いた部分）を貼り付けます。');
-  console.log("");
+  logger.log("");
+  logger.log("--- 手動方式に切替えます ---");
+  logger.log("1. ブラウザで都立AIにログインしてください。");
+  logger.log("2. DevTools → Network で api/v1/chat/ へのリクエストを探します。");
+  logger.log('3. Request Headers の authorization の値（"Bearer " を除いた部分）を貼り付けます。');
+  logger.log("");
   const { createInterface } = await import("node:readline/promises");
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   let token = "";
@@ -40,16 +41,16 @@ async function runLogin(): Promise<void> {
     rl.close();
   }
   if (token === "") {
-    console.error("empty token");
+    logger.error("empty token");
     process.exit(1);
   }
-  console.log("validating...");
+  logger.start("validating...");
   if (!(await checkSession(token))) {
-    console.error("invalid or expired session token");
+    logger.error("invalid or expired session token");
     process.exit(1);
   }
   saveSessionToken(token);
-  console.log("saved. Use model toritsu-fast (高速) or toritsu-reasoning (推論).");
+  logger.success("saved. Use model toritsu-fast (高速) or toritsu-reasoning (推論).");
 }
 
 const app = new Hono();

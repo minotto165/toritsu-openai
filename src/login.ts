@@ -1,6 +1,7 @@
 // --login：実Chromeで手動ログイン後にトークン自動取得
 import { chromium } from "playwright-core";
 import { checkSession, saveSessionToken } from "./upstream/webui";
+import { logger } from "./infra/logger";
 
 const LOGIN_URL = "https://ai.metro.tokyo.lg.jp/";
 const TOKEN_KEY = "auth._token.local";
@@ -137,7 +138,7 @@ export async function autoLogin(): Promise<boolean> {
       headless: false,
     });
   } catch (err) {
-    console.log(`(Chromeを起動できませんでした: ${err})`);
+    logger.warn(`Chromeを起動できませんでした: ${err}`);
     return false;
   }
   try {
@@ -146,30 +147,30 @@ export async function autoLogin(): Promise<boolean> {
     await page.goto(LOGIN_URL);
     const { email, password } = msCredentials();
     if (email !== "" && password !== "") {
-      console.log(".envのMSアカウントで自動サインインを試みます...");
+      logger.start(".envのMSアカウントで自動サインインを試みます...");
       const ok = await tryMicrosoftAutoLogin(page, email, password);
       if (!ok) {
-        console.log("自動入力では完了しませんでした。手動で続けてください（最大5分待ちます）。");
+        logger.warn("自動入力では完了しませんでした。手動で続けてください（最大5分待ちます）。");
       }
     } else {
-      console.log("開いたChromeで都立AIにログインしてください（最大5分待ちます）。");
-      console.log("ヒント: .envにTORITSU_MS_EMAIL/TORITSU_MS_PASSWORDを設定すると自動入力できます。");
+      logger.info("開いたChromeで都立AIにログインしてください（最大5分待ちます）。");
+      logger.info("ヒント: .envにTORITSU_MS_EMAIL/TORITSU_MS_PASSWORDを設定すると自動入力できます。");
     }
     const deadline = Date.now() + TIMEOUT_MS;
     while (Date.now() < deadline) {
       const token = await readToken(page).catch(() => "");
       if (token !== "") {
-        console.log("トークンを検出。検証中...");
+        logger.start("トークンを検出。検証中...");
         if (await checkSession(token)) {
           saveSessionToken(token);
-          console.log("saved. Use model toritsu-fast (高速) or toritsu-reasoning (推論).");
+          logger.success("saved. Use model toritsu-fast (高速) or toritsu-reasoning (推論).");
           return true;
         }
-        console.log("トークンが無効でした。ログインし直してください。");
+        logger.warn("トークンが無効でした。ログインし直してください。");
       }
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     }
-    console.error("タイムアウトしました。");
+    logger.error("タイムアウトしました。");
     return false;
   } finally {
     await browser.close().catch(() => undefined);

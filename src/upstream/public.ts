@@ -2,6 +2,7 @@
 import { TORITSU_API_URL, KEY_FILE, getApiKey } from "../infra/config";
 import { UpstreamError } from "../infra/http";
 import { debugRecord } from "../infra/debug";
+import { logger } from "../infra/logger";
 import { upstreamErrorMessage, type ToritsuResponse } from "../text/translate";
 
 export interface PublicResult {
@@ -39,7 +40,7 @@ export async function callPublicUpstream(
   debugRecord("public_upstream", { input, status: upstream.status, body: data });
   if (!upstream.ok) {
     if (upstream.status === 401 && KEY_FILE) {
-      console.error(`[toritsu-openai] 401 from upstream - key may be expired, refresh ${KEY_FILE}`);
+      logger.warn(`401 from upstream - key may be expired, refresh ${KEY_FILE}`);
     }
     throw new UpstreamError(
       upstream.status,
