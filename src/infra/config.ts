@@ -4,8 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { logger } from "./logger";
 
-export const TORITSU_API_URL =
-  process.env.TORITSU_API_URL ?? "https://ai-api.metro.tokyo.lg.jp/api/v1/public/message";
+export const TORITSU_API_URL = "https://ai-api.metro.tokyo.lg.jp/api/v1/public/message";
 export const PORT = Number(process.env.PORT ?? "3000");
 export const KEY_FILE = process.env.TORITSU_KEY_FILE;
 

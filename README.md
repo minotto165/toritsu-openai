@@ -140,7 +140,6 @@ TORITSU_DEBUG=full bun run src/index.ts
 | `TORITSU_API_KEY` / `TORITSU_KEY_FILE` | APIキー（直指定かファイルかどちらか）                  |
 | `TORITSU_SESSION`                      | WebUIのセッショントークン（`--login` 保存よりenv優先） |
 | `PORT`                                 | 待受ポート（既定3000、bindは127.0.0.1固定）            |
-| `TORITSU_API_URL`                      | 上流URLの上書き（テスト用）                            |
 | `TORITSU_DEBUG`                        | `1` でサイズ内訳をログ出力、`full` で生ログ保存      |
 | `TORITSU_PROXY_KEY_FILE`               | プロキシキー保存先（既定 `~/.config/toritsu-openai/proxy_keys.json`） |
 
