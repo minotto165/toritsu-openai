@@ -147,7 +147,7 @@ export async function autoLogin(): Promise<boolean> {
     await page.goto(LOGIN_URL);
     const { email, password } = msCredentials();
     if (email !== "" && password !== "") {
-      logger.start(".envのMSアカウントで自動サインインを試みます...");
+      logger.info(".envのMSアカウントで自動サインインを試みます...");
       const ok = await tryMicrosoftAutoLogin(page, email, password);
       if (!ok) {
         logger.warn("自動入力では完了しませんでした。手動で続けてください（最大5分待ちます）。");
@@ -160,10 +160,10 @@ export async function autoLogin(): Promise<boolean> {
     while (Date.now() < deadline) {
       const token = await readToken(page).catch(() => "");
       if (token !== "") {
-        logger.start("トークンを検出。検証中...");
+        logger.info("トークンを検出。検証中...");
         if (await checkSession(token)) {
           saveSessionToken(token);
-          logger.success("saved. Use model toritsu-fast (高速) or toritsu-reasoning (推論).");
+          logger.info("saved. Use model toritsu-fast (高速) or toritsu-reasoning (推論).");
           return true;
         }
         logger.warn("トークンが無効でした。ログインし直してください。");

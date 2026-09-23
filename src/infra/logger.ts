@@ -1,4 +1,11 @@
-// 共通ロガー（consola: TTYでは色付き、非TTYではプレーン）
-import { consola } from "consola";
+// 共通ロガー（tslog: TTYでは色付きpretty、非TTYでは自動でプレーン）
+import { Logger } from "tslog";
 
-export const logger = consola.withTag("toritsu-openai");
+export const logger = new Logger({
+  name: "toritsu-openai",
+  type: "pretty",
+  pretty: {
+    timeZone: "local",
+    template: "{{hh}}:{{MM}}:{{ss}} {{logLevelName}} [{{name}}] ",
+  },
+});

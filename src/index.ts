@@ -18,20 +18,20 @@ if (process.argv.includes("--login")) {
 // エントリポイント：薄いルーター＋--login
 /** --login：実Chromeで手動ログイン後にトークンを自動取得（学校認証情報は扱わない） */
 async function runLogin(): Promise<void> {
-  logger.log("=== toritsu-openai session login ===");
+  logger.info("=== toritsu-openai session login ===");
   logger.warn("注意: 保存されるのは都立AIのセッショントークンです。");
   logger.warn("学校アカウント全体へのアクセスに繋がるため、他人と共有しないでください。");
-  logger.log("");
+  logger.info("");
   const { autoLogin } = await import("./login");
   if (await autoLogin()) {
     return;
   }
-  logger.log("");
-  logger.log("--- 手動方式に切替えます ---");
-  logger.log("1. ブラウザで都立AIにログインしてください。");
-  logger.log("2. DevTools → Network で api/v1/chat/ へのリクエストを探します。");
-  logger.log('3. Request Headers の authorization の値（"Bearer " を除いた部分）を貼り付けます。');
-  logger.log("");
+  logger.info("");
+  logger.info("--- 手動方式に切替えます ---");
+  logger.info("1. ブラウザで都立AIにログインしてください。");
+  logger.info("2. DevTools → Network で api/v1/chat/ へのリクエストを探します。");
+  logger.info('3. Request Headers の authorization の値（"Bearer " を除いた部分）を貼り付けます。');
+  logger.info("");
   const { createInterface } = await import("node:readline/promises");
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   let token = "";
@@ -44,13 +44,13 @@ async function runLogin(): Promise<void> {
     logger.error("empty token");
     process.exit(1);
   }
-  logger.start("validating...");
+  logger.info("validating...");
   if (!(await checkSession(token))) {
     logger.error("invalid or expired session token");
     process.exit(1);
   }
   saveSessionToken(token);
-  logger.success("saved. Use model toritsu-fast (高速) or toritsu-reasoning (推論).");
+  logger.info("saved. Use model toritsu-fast (高速) or toritsu-reasoning (推論).");
 }
 
 const app = new Hono();
