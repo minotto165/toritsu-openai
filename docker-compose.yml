@@ -1,0 +1,15 @@
+services:
+  toritsu-openai:
+    build: .
+    container_name: toritsu-openai
+    restart: unless-stopped
+    # app binds 127.0.0.1 fixed (src/index.ts) -> host network so localhost:3000 works
+    # and cloudflared (host mode) can reach it. No ports: needed with host mode.
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      - TORITSU_PROXY_KEY_FILE=/config/proxy_keys.json
+      - TORITSU_DEBUG_FILE=/config/debug.log
+    volumes:
+      - /home/minotto/.config/toritsu-openai:/config:rw
