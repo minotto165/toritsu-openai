@@ -517,11 +517,15 @@ export async function handleAgentChat(
   const isToolResultTurn = lastMsg !== undefined && lastMsg.role === "tool";
   // クライアントsystemはtool記述部だけ除去して活かす。
   // 巨大systemは機構部を守るため先頭3000文字に切る
-  const keptRaw = rewriteClientSystem(
-    req.messages
-      .filter((m) => m.role === "system")
-      .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content))),
-  );
+  // TORITSU_KEEP_SYSTEM=0 で除去して機構部だけにする (チューニング用)
+  const keepSystem = (process.env.TORITSU_KEEP_SYSTEM ?? "1").trim() !== "0";
+  const keptRaw = keepSystem
+    ? rewriteClientSystem(
+        req.messages
+          .filter((m) => m.role === "system")
+          .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content))),
+      )
+    : "";
   const keptSystem =
     keptRaw.length > KEPT_SYSTEM_CAP ? `${keptRaw.slice(0, KEPT_SYSTEM_CAP)}\n...[system truncated]` : keptRaw;
   const rank = rankContext(req.messages.filter((m) => m.role !== "system"));
