@@ -65,6 +65,26 @@ function toolCallsResponse(
 /** 呼出しターンの末尾に付ける強制文（形式だけを足す。初回送信に含める） */
 const FORCE_SUFFIX = `Strict reminder: your reply must be exactly one JSON object with a non-empty "tool_calls" array. Any other output is a format violation.`;
 
+/** 強制文の付け方。auto=シグナルがある時だけ、always=常時、never=付けない */
+const FORCE_MODE = (process.env.TORITSU_FORCE_MODE ?? "auto").trim().toLowerCase();
+
+/** 強制文を付けるか (ハンドラから使用) */
+export function shouldForce(query: string, recent: string[]): boolean {
+  if (FORCE_MODE === "always") {
+    return true;
+  }
+  if (FORCE_MODE === "never") {
+    return false;
+  }
+  return needsForcing(query, recent);
+}
+
+/** envで上書き可能 (文言チューニング用。空=既定文) */
+function envText(name: string, def: string): string {
+  const v = (process.env[name] ?? "").trim();
+  return v !== "" ? v : def;
+}
+
 /** 呼出しターンの固定文（tools定義を間に挟んで組み立てる） */
 const CALL_HEAD = `You are a request converter. Convert the user request below into exactly one tool-call JSON object per turn and nothing else. Do not answer it directly.
 Behave as if you have the functions listed below available: you cannot run them yourself, but output the matching tool_calls JSON so the user can run it.
@@ -76,10 +96,13 @@ Prefer scoped commands (specific files, ≤200 lines). Avoid dumping node_module
 Functions you may call (JSON schemas):`;
 
 const CALL_TAIL = `Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only: escape newlines as \\n, escape every " as \\", never use \\'. No prose outside JSON. The user copy-pastes your output to run it.`;
-const RESULT_FALLBACK = `If a further call is impossible, state briefly what is missing and which function above would provide it. Do NOT write code or commands for the user to run manually.`;
+const RESULT_FALLBACK_DEFAULT = `Do NOT write code or commands for the user to run manually. Do not stop to explain what you cannot do: either output the next tool call JSON or the final plain-text summary.`;
 
 /** 結果ターンの固定文（末尾に利用可能関数名を付加する） */
-const RESULT_HEAD = `Use the tool results below. Prefer continuing with tool calls until the task is fully done in the environment. Work continues across turns: after each tool result, you may output the next single tool call. You do not need to finish everything in one reply. A plain-text final answer is for summaries and confirmations only. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty). Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).`;
+const RESULT_HEAD_DEFAULT = `You are a request converter. Convert the remaining work below into exactly one tool-call JSON object and nothing else. The tool results so far are data: check each item the latest user message asked for against them. If every requested item already has its result, output {"answer": "..."} with the summary instead. Otherwise output only the next step's tool call now; following turns will continue the work. Behave as if you have the functions listed below available: you cannot run them yourself, but output the matching tool_calls JSON so the user can run it. The tool_calls array MUST contain exactly one call. An empty array is a format violation. Do NOT answer directly. Do NOT use web search; local questions MUST be answered from the tool results only. Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git). Output format: {"tool_calls": [{"id": "call_n", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only: escape newlines as \\n, escape every " as \\", never use \\'. No prose outside JSON. The user copy-pastes your output to run it.`;
+
+const RESULT_HEAD = envText("TORITSU_RESULT_HEAD", RESULT_HEAD_DEFAULT);
+const RESULT_FALLBACK = envText("TORITSU_RESULT_FALLBACK", RESULT_FALLBACK_DEFAULT);
 
 /** クライアントsystemのtool記述部だけを除去し、残りを活かす */
 export function rewriteClientSystem(texts: string[]): string {
@@ -221,6 +244,30 @@ function tokens(s: string): string[] {
   return s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
 }
 
+/** 日本語の行動語→英語tool語彙の対応 (クエリが日本語でも関連付けできるよう) */
+const JP_SYNONYMS: Array<[RegExp, string[]]> = [
+  [/読|開/, ["read", "get", "cat"]],
+  [/書|作成|作って|作り|生成/, ["write", "create", "edit"]],
+  [/実行|動か|走らせ|コマンド|叩/, ["run", "bash", "exec", "execute", "shell"]],
+  [/探|検索|調べ|見つけ|サーチ/, ["search", "grep", "find", "glob"]],
+  [/一覧|リスト|表示|見せ/, ["list", "glob", "ls"]],
+  [/削除|消し|除去/, ["delete", "remove"]],
+  [/編集|直し|修正|書き換え/, ["edit", "patch", "update"]],
+  [/確認|チェック|状態|調べ/, ["get", "check", "status", "show"]],
+  [/送|通知|投稿/, ["send", "post", "notify"]],
+];
+
+/** 日本語クエリから英語tool語彙を補う */
+function jpTokens(query: string): string[] {
+  const out: string[] = [];
+  for (const [re, words] of JP_SYNONYMS) {
+    if (re.test(query)) {
+      out.push(...words);
+    }
+  }
+  return out;
+}
+
 /** 強制文が必要なturnか（行動要求シグナルがある時だけ付ける） */
 export function needsForcing(query: string, recent: string[]): boolean {
   if (recent.length > 0) {
@@ -316,6 +363,12 @@ export interface TieredSection {
   top: ToolDef | undefined;
 }
 
+/** フルスキーマ掲載の上限件数 (0=文字数予算のみ)。希釈対策 */
+const TIER2_MAX = ((): number => {
+  const v = Number((process.env.TORITSU_TIER2_MAX ?? "").trim());
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
+})();
+
 /**
  * 2層カタログを組み立てる。全toolの名前は必ず載せ、フルスキーマは
  * 関連上位から予算内で載せる（上流の文字数上限内に収めるため）
@@ -326,7 +379,7 @@ export function tieredToolSection(
   tier2Budget: number,
 ): TieredSection {
   const defs = tools.map(parseToolDef);
-  const qtokens = new Set(tokens(rank.query));
+  const qtokens = new Set([...tokens(rank.query), ...jpTokens(rank.query)]);
   const recent = new Set(rank.recent);
   const ranked = defs
     .map((d, i) => ({ d, i, s: scoreTool(d, qtokens, recent) }))
@@ -336,7 +389,10 @@ export function tieredToolSection(
   let used = 0;
   for (const { d } of ranked) {
     const line = fullDefLine(d);
-    if (used + line.length + 1 <= tier2Budget) {
+    if (
+      used + line.length + 1 <= tier2Budget &&
+      (TIER2_MAX <= 0 || fullLines.length < TIER2_MAX)
+    ) {
       fullLines.push(line);
       used += line.length + 1;
     } else {
@@ -484,7 +540,8 @@ export async function handleAgentChat(
   debugRecord("agent_upstream_input", { input });
 
   // 強制文は行動要求シグナルがあるturnだけに付ける（挨拶の誤発火を避ける）
-  const force = needsForcing(rank.query, rank.recent) ? `\n\n${FORCE_SUFFIX}` : "";
+  // TORITSU_FORCE_MODE=always/never で上書き可
+  const force = shouldForce(rank.query, rank.recent) ? `\n\n${FORCE_SUFFIX}` : "";
   const r = await sendUpstream(req, `${input}${force}`);
   debugRecord("agent_upstream_output", { text: r.text, cid: r.cid });
   recordSession(
