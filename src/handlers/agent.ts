@@ -2,12 +2,13 @@
 import { getApiKey } from "../infra/config";
 import { json, toSSE, type ChatRequest } from "../infra/http";
 import { debugRecord } from "../infra/debug";
-import { sendUpstream } from "../upstream/sender";
+import { sendUpstream, type SendResult } from "../upstream/sender";
 import {
   toToritsuInput,
   toChatCompletion,
   parseAssistantOutput,
   selectMessages,
+  type ChatMessage,
 } from "../text/translate";
 
 /** 自前軽量system（先頭付与・独立変数） */
@@ -29,14 +30,44 @@ export function shrinkInput(input: string): { text: string; cut: number } {
   }
   return {
     text:
-      `${input.slice(0, HEAD_KEEP)}\n...[omitted ${input.length - INPUT_BUDGET} chars of older tool output]...\n` +
+      `${input.slice(0, HEAD_KEEP)}\n...[omitted ${input.length - INPUT_BUDGET} chars of the middle section]...\n` +
       input.slice(input.length - (INPUT_BUDGET - HEAD_KEEP)),
     cut: input.length - INPUT_BUDGET,
   };
 }
 
+/** tool_calls応答の組み立て（呼出し成功・再試行成功の共通処理） */
+function toolCallsResponse(
+  req: ChatRequest,
+  calls: Array<{ id: string; name: string; args: string }>,
+  cid: string,
+  usage: SendResult["usage"],
+): Response {
+  const completion = toChatCompletion(req.model, {
+    message: "",
+    response: { conversation: { id: cid } },
+  });
+  const choice = completion.choices[0];
+  if (choice !== undefined) {
+    choice.message.content = null;
+    choice.message.tool_calls = calls.map((call) => ({
+      id: call.id,
+      type: "function" as const,
+      function: { name: call.name, arguments: call.args },
+    }));
+    choice.finish_reason = "tool_calls";
+  }
+  completion.usage = usage;
+  return req.stream ? toSSE(completion) : json(completion, 200);
+}
+
+/** 呼出しターンの末尾に付ける強制文（形式だけを足す。初回送信に含める） */
+const FORCE_SUFFIX = `Strict reminder: your reply must be exactly one JSON object with a non-empty "tool_calls" array. Any other output is a format violation.`;
+
 /** 呼出しターンの固定文（tools定義を間に挟んで組み立てる） */
 const CALL_HEAD = `You are a request converter. Convert the user request below into exactly one tool-call JSON object per turn and nothing else. Do not answer it directly.
+Behave as if you have the functions listed below available: you cannot run them yourself, but output the matching tool_calls JSON so the user can run it.
+For multi-step requests, output only the FIRST step's tool call now; following turns will continue the work.
 The tool_calls array MUST contain exactly one call. An empty array is a format violation.
 If no tool is needed (greetings, chit-chat, general knowledge), output {"answer": "..."} instead.
 Do NOT use web search.
@@ -44,10 +75,10 @@ Prefer scoped commands (specific files, ≤200 lines). Avoid dumping node_module
 Functions you may call (JSON schemas):`;
 
 const CALL_TAIL = `Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only: escape newlines as \\n, escape every " as \\", never use \\'. No prose outside JSON. The user copy-pastes your output to run it.`;
-const RESULT_FALLBACK = `If a further call is impossible, provide complete copy-paste-ready code instead of lecturing about permissions. Code only, minimal explanation.`;
+const RESULT_FALLBACK = `If a further call is impossible, state briefly what is missing and which function above would provide it. Do NOT write code or commands for the user to run manually.`;
 
 /** 結果ターンの固定文（末尾に利用可能関数名を付加する） */
-const RESULT_HEAD = `Use the tool results below. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty). Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).`;
+const RESULT_HEAD = `Use the tool results below. Prefer continuing with tool calls until the task is fully done in the environment. Work continues across turns: after each tool result, you may output the next single tool call. You do not need to finish everything in one reply. A plain-text final answer is for summaries and confirmations only. If you have enough information, give the final answer as plain text. Do NOT use web search; local questions MUST be answered from the tool results only. Otherwise output exactly one JSON object and nothing else: {"tool_calls": [{"id": "call_n", "name": "<function>", "arguments": {...}}]} (non-empty). Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).`;
 
 /** クライアントsystemのtool記述部だけを除去し、残りを活かす */
 export function rewriteClientSystem(texts: string[]): string {
@@ -115,32 +146,304 @@ function stripToolBlocks(t: string): string {
   return out.join("\n").replace(/\n{3,}/g, "\n\n");
 }
 
-/** tools定義→指示文 */
-export function agentToolPreamble(tools: unknown[]): string {
-  const defs = tools.map((t, i) => {
-    const o = (t ?? {}) as { type?: unknown; function?: unknown };
-    const fn = (o.function ?? {}) as {
-      name?: unknown;
-      description?: unknown;
-      parameters?: unknown;
-    };
-    const name = typeof fn.name === "string" ? fn.name : `tool_${i}`;
-    const desc = typeof fn.description === "string" ? fn.description : "";
-    const params = fn.parameters !== undefined ? JSON.stringify(fn.parameters) : "{}";
-    return `- ${name}: ${desc} (parameters: ${params})`;
-  });
-  return `${agentIdentity()}\n${CALL_HEAD}\n${defs.join("\n")}\n${CALL_TAIL}`;
+/** tool定義の正規化形 */
+export interface ToolDef {
+  name: string;
+  desc: string;
+  params: unknown;
 }
 
-/** 結果ターン用指示 */
-export function agentResultPreamble(tools: unknown[] = []): string {
-  const names = tools.map((t, i) => {
-    const o = (t ?? {}) as { function?: unknown };
-    const fn = (o.function ?? {}) as { name?: unknown };
-    return typeof fn.name === "string" ? fn.name : `tool_${i}`;
+export function parseToolDef(t: unknown, i: number): ToolDef {
+  const o = (t ?? {}) as { type?: unknown; function?: unknown };
+  const fn = (o.function ?? {}) as {
+    name?: unknown;
+    description?: unknown;
+    parameters?: unknown;
+  };
+  return {
+    name: typeof fn.name === "string" ? fn.name : `tool_${i}`,
+    desc: typeof fn.description === "string" ? fn.description : "",
+    params: fn.parameters !== undefined ? fn.parameters : {},
+  };
+}
+
+const DESC_CAP = 120;
+const MSG_BUDGET = 3000;
+const TAIL_RESERVE = 600;
+const EXTRA_MARGIN = 1200;
+
+/** スキーマから冗長キーを除去（名前・型・必須・enumだけ残す） */
+export function slimSchema(o: unknown): unknown {
+  if (Array.isArray(o)) {
+    return o.map(slimSchema);
+  }
+  if (o !== null && typeof o === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(o as Record<string, unknown>)) {
+      if (k === "description" || k === "examples" || k === "default" || k === "title") {
+        continue;
+      }
+      out[k] = slimSchema(v);
+    }
+    return out;
+  }
+  return o;
+}
+
+function fullDefLine(d: ToolDef): string {
+  const params = JSON.stringify(slimSchema(d.params));
+  return `- ${d.name}: ${d.desc.slice(0, DESC_CAP)} (parameters: ${params})`;
+}
+
+function nameOnlyLine(d: ToolDef): string {
+  const p = (d.params ?? {}) as { required?: unknown; properties?: unknown };
+  const req = Array.isArray(p.required)
+    ? p.required.filter((v): v is string => typeof v === "string")
+    : [];
+  const props =
+    p.properties !== null && typeof p.properties === "object"
+      ? (p.properties as Record<string, unknown>)
+      : {};
+  const reqSchemas = req.map((n) => {
+    const s = props[n] as { type?: unknown } | undefined;
+    const t = s !== undefined && typeof s.type === "string" ? s.type : "string";
+    return `${n}: ${t}`;
   });
-  const available = names.length > 0 ? `\nAvailable functions: ${names.join(", ")}` : "";
-  return `${agentIdentity()}\n${RESULT_HEAD}${available}\n${RESULT_FALLBACK}`;
+  const opt = Object.keys(props).filter((k) => !req.includes(k));
+  const shownOpt = opt.slice(0, 8);
+  const more = opt.length > shownOpt.length ? ` +${opt.length - shownOpt.length} more` : "";
+  const optPart = shownOpt.length > 0 || more !== "" ? `; optional: ${shownOpt.join(", ")}${more}` : "";
+  return `- ${d.name} (args: {${reqSchemas.join(", ")}}${optPart})`;
+}
+
+function tokens(s: string): string[] {
+  return s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+}
+
+/** 強制文が必要なturnか（行動要求シグナルがある時だけ付ける） */
+export function needsForcing(query: string, recent: string[]): boolean {
+  if (recent.length > 0) {
+    return true;
+  }
+  return /して|ください|ほしい|教えて|読んで|確認|作成|実行|取って|調べて|見せて|作って|探して|動かして|list|read|get|check|create|run|show|find|search/i.test(
+    query,
+  );
+}
+
+/** 必須引数のダミー値（正解例の形だけ示す用） */
+function dummyArgs(params: unknown): Record<string, unknown> {
+  const p = (params ?? {}) as { required?: unknown; properties?: unknown };
+  const req = Array.isArray(p.required)
+    ? p.required.filter((v): v is string => typeof v === "string")
+    : [];
+  const props =
+    p.properties !== null && typeof p.properties === "object"
+      ? (p.properties as Record<string, unknown>)
+      : {};
+  const out: Record<string, unknown> = {};
+  for (const n of req) {
+    const s = props[n] as { type?: unknown } | undefined;
+    const t = s !== undefined && typeof s.type === "string" ? s.type : "string";
+    out[n] = t === "number" || t === "integer" ? 0 : t === "boolean" ? true : t === "array" ? [] : t === "object" ? {} : "x";
+  }
+  return out;
+}
+
+/** 関連首位toolの正解例1件（形だけ見せる。値はダミー） */
+function formatExample(d: ToolDef): string {
+  const want = d.desc !== "" ? d.desc.slice(0, 100) : `use ${d.name}`;
+  const envelope = {
+    tool_calls: [{ id: "call_1", name: d.name, arguments: JSON.stringify(dummyArgs(d.params)) }],
+  };
+  return `Example (output shape only):\nRequest: ${want}\nOutput: ${JSON.stringify(envelope)}`;
+}
+
+export interface RankContext {
+  query: string;
+  recent: string[];
+}
+
+/** リクエストから関連度判定材料を作る（最新文面＋直近の呼出し名） */
+export function rankContext(messages: ChatMessage[]): RankContext {
+  const texts = messages
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map((m) => (typeof m.content === "string" ? m.content : ""))
+    .filter((s) => s !== "");
+  const recent: string[] = [];
+  for (const m of messages) {
+    const tc = (m as { tool_calls?: unknown }).tool_calls;
+    if (Array.isArray(tc)) {
+      for (const c of tc) {
+        const item = (c ?? {}) as { name?: unknown; function?: { name?: unknown } };
+        const n = item.name ?? item.function?.name;
+        if (typeof n === "string") {
+          recent.push(n);
+        }
+      }
+    }
+  }
+  return { query: texts.slice(-3).join("\n"), recent: recent.slice(-8) };
+}
+
+function scoreTool(d: ToolDef, qtokens: Set<string>, recent: Set<string>): number {
+  let s = 0;
+  if (recent.has(d.name)) {
+    s += 5;
+  }
+  const nameParts = d.name
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((p) => p.length >= 3);
+  for (const p of nameParts) {
+    if (qtokens.has(p)) {
+      s += 2;
+    }
+  }
+  const dw = new Set(tokens(d.desc));
+  for (const q of qtokens) {
+    if (dw.has(q)) {
+      s += 1;
+    }
+  }
+  return s;
+}
+
+export interface TieredSection {
+  text: string;
+  tier2Count: number;
+  tier1Count: number;
+  top: ToolDef | undefined;
+}
+
+/**
+ * 2層カタログを組み立てる。全toolの名前は必ず載せ、フルスキーマは
+ * 関連上位から予算内で載せる（上流の文字数上限内に収めるため）
+ */
+export function tieredToolSection(
+  tools: unknown[],
+  rank: RankContext,
+  tier2Budget: number,
+): TieredSection {
+  const defs = tools.map(parseToolDef);
+  const qtokens = new Set(tokens(rank.query));
+  const recent = new Set(rank.recent);
+  const ranked = defs
+    .map((d, i) => ({ d, i, s: scoreTool(d, qtokens, recent) }))
+    .sort((a, b) => b.s - a.s || a.i - b.i);
+  const fullLines: string[] = [];
+  const rest: ToolDef[] = [];
+  let used = 0;
+  for (const { d } of ranked) {
+    const line = fullDefLine(d);
+    if (used + line.length + 1 <= tier2Budget) {
+      fullLines.push(line);
+      used += line.length + 1;
+    } else {
+      rest.push(d);
+    }
+  }
+  // name-only層は元のクライアント順に戻す
+  const restSet = new Set(rest);
+  const nameLines = defs.filter((d) => restSet.has(d)).map(nameOnlyLine);
+  const head = fullLines.join("\n");
+  const first = ranked.length > 0 ? (ranked[0] as { d: ToolDef }).d : undefined;
+  if (nameLines.length === 0) {
+    return { text: head, tier2Count: fullLines.length, tier1Count: 0, top: first };
+  }
+  const note = `Additional functions (compact args shown; you may call any function listed):`;
+  return {
+    text: `${head}\n${note}\n${nameLines.join("\n")}`,
+    tier2Count: fullLines.length,
+    tier1Count: nameLines.length,
+    top: first,
+  };
+}
+
+export interface PreambleBuild {
+  body: string;
+  tier2Count: number;
+  tier1Count: number;
+}
+
+/** 機構＋2層カタログを予算内で組み立てる */
+export function buildAgentPreamble(
+  tools: unknown[],
+  rank: RankContext,
+  keptSystem: string,
+  isResultTurn: boolean,
+): PreambleBuild {
+  const defs = tools.map(parseToolDef);
+  const tier1All = defs.map(nameOnlyLine).join("\n").length;
+  const head = isResultTurn ? RESULT_HEAD : CALL_HEAD;
+  const tail = isResultTurn ? RESULT_FALLBACK : CALL_TAIL;
+  const baseLen = agentIdentity().length + head.length + tail.length + keptSystem.length + EXTRA_MARGIN;
+  const tier2Budget = Math.max(
+    0,
+    INPUT_BUDGET - baseLen - tier1All - MSG_BUDGET - TAIL_RESERVE,
+  );
+  const section = tieredToolSection(tools, rank, tier2Budget);
+  // 呼出しターンのみ関連首位の正解例を1件添える（形の学習用）。
+  // シグナルなし（英語語彙も履歴もゼロ）の時は付けない。無関係な例がノイズになるため
+  // ※結果turnへの正解例はsummary破壊が実測されたため付けない
+  const hasSignal = rank.recent.length > 0 || tokens(rank.query).length > 0;
+  const example =
+    !isResultTurn && hasSignal && section.top !== undefined
+      ? `\n${formatExample(section.top)}`
+      : "";
+  const body = isResultTurn
+    ? `${agentIdentity()}\n${RESULT_HEAD}\n${section.text}${example}\n${RESULT_FALLBACK}`
+    : `${agentIdentity()}\n${CALL_HEAD}\n${section.text}${example}\n${CALL_TAIL}`;
+  return { body, tier2Count: section.tier2Count, tier1Count: section.tier1Count };
+}
+
+/** tools定義→指示文（2層カタログ版） */
+export function agentToolPreamble(
+  tools: unknown[],
+  rank: RankContext = { query: "", recent: [] },
+  tier2Budget = 10000,
+): string {
+  const section = tieredToolSection(tools, rank, tier2Budget);
+  return `${agentIdentity()}\n${CALL_HEAD}\n${section.text}\n${CALL_TAIL}`;
+}
+
+/** 結果ターン用指示（2層カタログ版） */
+export function agentResultPreamble(
+  tools: unknown[] = [],
+  rank: RankContext = { query: "", recent: [] },
+  tier2Budget = 10000,
+): string {
+  const section = tieredToolSection(tools, rank, tier2Budget);
+  return `${agentIdentity()}\n${RESULT_HEAD}\n${section.text}\n${RESULT_FALLBACK}`;
+}
+
+/** 古いメッセージから削る（最新リクエストと直近結果を守る） */
+export function trimMessages(
+  messages: ChatMessage[],
+  budget: number,
+): { messages: ChatMessage[]; dropped: number } {
+  const sizes = messages.map((m) => {
+    const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+    return m.role.length + c.length + 32;
+  });
+  let used = 0;
+  let keepFrom = messages.length;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const s = sizes[i] as number;
+    if (used + s > budget && keepFrom < messages.length) {
+      break;
+    }
+    used += s;
+    keepFrom = i;
+  }
+  const dropped = keepFrom;
+  if (dropped === 0) {
+    return { messages, dropped: 0 };
+  }
+  const marker: ChatMessage = {
+    role: "user",
+    content: `...[${dropped} older messages omitted]...`,
+  };
+  return { messages: [marker, ...messages.slice(keepFrom)], dropped };
 }
 
 /**
@@ -163,38 +466,28 @@ export async function handleAgentChat(
   );
   const keptSystem =
     keptRaw.length > KEPT_SYSTEM_CAP ? `${keptRaw.slice(0, KEPT_SYSTEM_CAP)}\n...[system truncated]` : keptRaw;
-  const preambleBody = isToolResultTurn ? agentResultPreamble(tools) : agentToolPreamble(tools);
-  // 機構部を先に置く（縮小時に守られる順序）
-  const preamble = `${preambleBody}${keptSystem !== "" ? `\n${keptSystem}` : ""}`;
+  const rank = rankContext(req.messages.filter((m) => m.role !== "system"));
+  const built = buildAgentPreamble(tools, rank, keptSystem, isToolResultTurn);
+  // 機構部を先に置く（2層カタログは予算内で収まる設計）
+  const preamble = `${built.body}${keptSystem !== "" ? `\n${keptSystem}` : ""}`;
   // 継続ターンは最新1件のみ送る（上流が履歴を保持しているため）
-  const messages = selectMessages(
+  const selected = selectMessages(
     req.messages.filter((m) => m.role !== "system"),
     req.conversationId,
   );
+  // 新規ターン（全履歴再送）は古い方から削り、最新リクエストとカタログを守る
+  const { messages } = trimMessages(selected, MSG_BUDGET);
   const shrunk = shrinkInput(toToritsuInput(messages, preamble));
   const input = shrunk.text;
   debugRecord("agent_upstream_input", { input });
 
-  const r = await sendUpstream(req, input);
+  // 強制文は行動要求シグナルがあるturnだけに付ける（挨拶の誤発火を避ける）
+  const force = needsForcing(rank.query, rank.recent) ? `\n\n${FORCE_SUFFIX}` : "";
+  const r = await sendUpstream(req, `${input}${force}`);
   debugRecord("agent_upstream_output", { text: r.text, cid: r.cid });
   const parsed = parseAssistantOutput(r.text);
   if (parsed.type === "tool_calls") {
-    const completion = toChatCompletion(req.model, {
-      message: "",
-      response: { conversation: { id: r.cid } },
-    });
-    const choice = completion.choices[0];
-    if (choice !== undefined) {
-      choice.message.content = null;
-      choice.message.tool_calls = parsed.calls.map((call) => ({
-        id: call.id,
-        type: "function" as const,
-        function: { name: call.name, arguments: call.args },
-      }));
-      choice.finish_reason = "tool_calls";
-    }
-    completion.usage = r.usage;
-    return req.stream ? toSSE(completion) : json(completion, 200);
+    return toolCallsResponse(req, parsed.calls, r.cid, r.usage);
   }
   const completion = toChatCompletion(req.model, {
     message: parsed.text,
