@@ -246,7 +246,7 @@ function tokens(s: string): string[] {
 
 /** 日本語の行動語→英語tool語彙の対応 (クエリが日本語でも関連付けできるよう) */
 const JP_SYNONYMS: Array<[RegExp, string[]]> = [
-  [/読|開/, ["read", "get", "cat"]],
+  [/読|開/, ["read"]],
   [/書|作成|作って|作り|生成/, ["write", "create", "edit"]],
   [/実行|動か|走らせ|コマンド|叩/, ["run", "bash", "exec", "execute", "shell"]],
   [/探|検索|調べ|見つけ|サーチ/, ["search", "grep", "find", "glob"]],
@@ -347,10 +347,12 @@ function scoreTool(d: ToolDef, qtokens: Set<string>, recent: Set<string>): numbe
       s += 2;
     }
   }
+  // 説明文の一致は+1まで (巨大な説明文が名前一致を上回らないよう)
   const dw = new Set(tokens(d.desc));
   for (const q of qtokens) {
     if (dw.has(q)) {
       s += 1;
+      break;
     }
   }
   return s;
@@ -420,6 +422,7 @@ export interface PreambleBuild {
   body: string;
   tier2Count: number;
   tier1Count: number;
+  top: ToolDef | undefined;
 }
 
 /** 機構＋2層カタログを予算内で組み立てる */
@@ -450,7 +453,7 @@ export function buildAgentPreamble(
   const body = isResultTurn
     ? `${agentIdentity()}\n${RESULT_HEAD}\n${section.text}${example}\n${RESULT_FALLBACK}`
     : `${agentIdentity()}\n${CALL_HEAD}\n${section.text}${example}\n${CALL_TAIL}`;
-  return { body, tier2Count: section.tier2Count, tier1Count: section.tier1Count };
+  return { body, tier2Count: section.tier2Count, tier1Count: section.tier1Count, top: section.top };
 }
 
 /** tools定義→指示文（2層カタログ版） */
@@ -471,6 +474,34 @@ export function agentResultPreamble(
 ): string {
   const section = tieredToolSection(tools, rank, tier2Budget);
   return `${agentIdentity()}\n${RESULT_HEAD}\n${section.text}\n${RESULT_FALLBACK}`;
+}
+
+/** 偽の成功形 (thin): 関連首位toolの呼出し1件を履歴の形で見せる。
+ *  tool結果は付けない (偽の環境事実を作らないため) */
+function fakeHistory(top: ToolDef | undefined): ChatMessage[] {
+  if (top === undefined) {
+    return [];
+  }
+  const want = top.desc !== "" ? top.desc.slice(0, 100) : `use ${top.name}`;
+  return [
+    { role: "user", content: `Request: ${want}` },
+    {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: "cf1",
+          type: "function",
+          function: { name: top.name, arguments: JSON.stringify(dummyArgs(top.params)) },
+        },
+      ],
+    },
+  ];
+}
+
+/** 偽形を付けるか。TORITSU_FAKE_HISTORY=0 で無効 (既定は有効) */
+function fakeEnabled(): boolean {
+  return (process.env.TORITSU_FAKE_HISTORY ?? "1").trim() !== "0";
 }
 
 /** 古いメッセージから削る（最新リクエストと直近結果を守る） */
@@ -532,9 +563,14 @@ export async function handleAgentChat(
   const built = buildAgentPreamble(tools, rank, keptSystem, isToolResultTurn);
   // 機構部を先に置く（2層カタログは予算内で収まる設計）
   const preamble = `${built.body}${keptSystem !== "" ? `\n${keptSystem}` : ""}`;
+  // 偽の成功形は呼出しturn+シグナル時のみ先頭に付ける。
+  // 結果turn・挨拶には付けない (要約破壊と誤発火の実測があるため)
+  const force = shouldForce(rank.query, rank.recent) ? `\n\n${FORCE_SUFFIX}` : "";
+  const fake =
+    fakeEnabled() && !isToolResultTurn && force !== "" ? fakeHistory(built.top) : [];
   // 継続ターンは最新1件のみ送る（上流が履歴を保持しているため）
   const selected = selectMessages(
-    req.messages.filter((m) => m.role !== "system"),
+    [...fake, ...req.messages.filter((m) => m.role !== "system")],
     req.conversationId,
   );
   // 新規ターン（全履歴再送）は古い方から削り、最新リクエストとカタログを守る
@@ -545,7 +581,6 @@ export async function handleAgentChat(
 
   // 強制文は行動要求シグナルがあるturnだけに付ける（挨拶の誤発火を避ける）
   // TORITSU_FORCE_MODE=always/never で上書き可
-  const force = shouldForce(rank.query, rank.recent) ? `\n\n${FORCE_SUFFIX}` : "";
   const r = await sendUpstream(req, `${input}${force}`);
   debugRecord("agent_upstream_output", { text: r.text, cid: r.cid });
   recordSession(
