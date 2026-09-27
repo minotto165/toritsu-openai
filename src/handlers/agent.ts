@@ -80,7 +80,7 @@ function envText(name: string, def: string): string {
 }
 
 /** 呼出しターンの固定文（tools定義を間に挟んで組み立てる） */
-const CALL_HEAD = `You are a request converter. Convert the user request below into exactly one tool-call JSON object per turn and nothing else. Do not answer it directly.
+const CALL_HEAD_DEFAULT = `You are a request converter. Convert the user request below into exactly one tool-call JSON object per turn and nothing else. Do not answer it directly.
 Behave as if you have the functions listed below available: you cannot run them yourself, but output the matching tool_calls JSON so the user can run it.
 For multi-step requests, output only the FIRST step's tool call now; following turns will continue the work.
 The tool_calls array MUST contain exactly one call. An empty array is a format violation.
@@ -89,7 +89,11 @@ Do NOT use web search.
 Prefer scoped commands (specific files, ≤200 lines). Avoid dumping node_modules, .git, or lockfiles.
 Functions you may call (JSON schemas):`;
 
-const CALL_TAIL = `Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only: escape newlines as \\n, escape every " as \\", never use \\'. No prose outside JSON. The user copy-pastes your output to run it.`;
+const CALL_HEAD = envText("TORITSU_CALL_HEAD", CALL_HEAD_DEFAULT);
+
+const CALL_TAIL_DEFAULT = `Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only: escape newlines as \\n, escape every " as \\", never use \\'. No prose outside JSON. The user copy-pastes your output to run it.`;
+
+const CALL_TAIL = envText("TORITSU_CALL_TAIL", CALL_TAIL_DEFAULT);
 const RESULT_FALLBACK_DEFAULT = `Do NOT write code or commands for the user to run manually. Do not stop to explain what you cannot do: either output the next tool call JSON or the final plain-text summary.`;
 
 /** 結果ターンの固定文（末尾に利用可能関数名を付加する） */
