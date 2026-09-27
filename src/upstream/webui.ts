@@ -80,7 +80,7 @@ export async function sendWebuiMessage(opts: {
   form.append("message[content]", opts.input);
   form.append("is_stream", "0");
   form.append("model", opts.model);
-  form.append("tool_choice", "1");
+  form.append("tool_choice", "0");
   let res: Response;
   try {
     res = await fetch(WEBUI_API_URL, {
