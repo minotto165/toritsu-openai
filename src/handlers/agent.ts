@@ -3,6 +3,7 @@ import { getApiKey } from "../infra/config";
 import { json, toSSE, type ChatRequest } from "../infra/http";
 import { debugRecord } from "../infra/debug";
 import { sendUpstream, type SendResult } from "../upstream/sender";
+import { forgetSession, isStaleSessionError, recordSession } from "../infra/sessionmap";
 import {
   toToritsuInput,
   toChatCompletion,
@@ -454,6 +455,7 @@ export async function handleAgentChat(
   req: ChatRequest,
   tools: unknown[],
 ): Promise<Response> {
+  const attempt = async (): Promise<Response> => {
   // 末尾roleで判定：tool結果直後だけ回答許可、それ以外は呼出し強要に戻す
   const lastMsg = req.messages.length > 0 ? req.messages[req.messages.length - 1] : undefined;
   const isToolResultTurn = lastMsg !== undefined && lastMsg.role === "tool";
@@ -485,6 +487,10 @@ export async function handleAgentChat(
   const force = needsForcing(rank.query, rank.recent) ? `\n\n${FORCE_SUFFIX}` : "";
   const r = await sendUpstream(req, `${input}${force}`);
   debugRecord("agent_upstream_output", { text: r.text, cid: r.cid });
+  recordSession(
+    { keyId: req.keyId, model: req.model, messages: req.messages, tools },
+    r.cid,
+  );
   const parsed = parseAssistantOutput(r.text);
   if (parsed.type === "tool_calls") {
     return toolCallsResponse(req, parsed.calls, r.cid, r.usage);
@@ -495,4 +501,17 @@ export async function handleAgentChat(
   });
   completion.usage = r.usage;
   return req.stream ? toSSE(completion) : json(completion, 200);
+  };
+  try {
+    return await attempt();
+  } catch (err) {
+    // 対応表のcidが失効していたら捨てて全文で再送1回
+    if (req.resolvedSession === true && isStaleSessionError(err)) {
+      forgetSession(req.conversationId);
+      req.conversationId = "";
+      req.resolvedSession = false;
+      return await attempt();
+    }
+    throw err;
+  }
 }

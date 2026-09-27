@@ -9,6 +9,7 @@ import { debugRecord } from "./infra/debug";
 import { logger } from "./infra/logger";
 import { logRequest } from "./infra/request_log";
 import { proxyAuthEnabled, identifyProxyKey } from "./gateway/keys";
+import { resolveSession } from "./infra/sessionmap";
 import type { ChatMessage } from "./text/translate";
 
 if (process.argv.includes("--login")) {
@@ -131,13 +132,24 @@ app.post("/v1/chat/completions", async (c) => {
     return invalidRequest("messages is required");
   }
   const model = typeof body.model === "string" && body.model !== "" ? body.model : "toritsu";
+  const tools = Array.isArray(body.tools) ? (body.tools as unknown[]) : [];
   const req: ChatRequest = {
     model,
     messages: body.messages as ChatMessage[],
     stream: body.stream === true,
     conversationId: typeof body.conversation_id === "string" ? body.conversation_id : "",
+    keyId: keyLabel,
+    resolvedSession: false,
   };
-  const tools = Array.isArray(body.tools) ? (body.tools as unknown[]) : [];
+  // クライアントがcidを送らない場合、会話対応表で続きを照合する (REUSE=1時のみ)
+  if (req.conversationId === "") {
+    const hit = resolveSession({ keyId: req.keyId, model, messages: req.messages, tools });
+    if (hit !== null) {
+      req.conversationId = hit;
+      req.resolvedSession = true;
+      debugRecord("session_resolve", { hit: true, keyId: keyLabel, model });
+    }
+  }
   debugRecord("client_request", {
     model,
     stream: req.stream,

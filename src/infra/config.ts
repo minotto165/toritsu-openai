@@ -50,6 +50,21 @@ export function getApiKey(): string {
 const CONFIG_DIR = join(homedir(), ".config", "toritsu-openai");
 export const SESSION_FILE = join(CONFIG_DIR, "session");
 
+/** 数値envの読込 (不正時は既定値) */
+function numEnv(name: string, def: number): number {
+  const v = Number((process.env[name] ?? "").trim());
+  return Number.isFinite(v) && v > 0 ? v : def;
+}
+
+/** 会話対応表 (履歴→cid) の有効化。1=有効、既定off */
+export const SESSION_REUSE = process.env.TORITSU_SESSION_REUSE === "1";
+/** 対応表エントリの有効期限 (ミリ秒)。既定24時間 */
+export const SESSION_TTL_MS = numEnv("TORITSU_SESSION_TTL_HOURS", 24) * 3_600_000;
+/** 対応表の上限件数 (超過は古い方から淘汰)。既定1000 */
+export const SESSION_MAX = Math.floor(numEnv("TORITSU_SESSION_MAX", 1000));
+/** 対応表の永続化先 (空=メモリのみ)。0600保存 */
+export const SESSION_STORE = (process.env.TORITSU_SESSION_STORE ?? "").trim();
+
 /** セッションファイル読込（なければ空文字） */
 export function readSessionFile(): string {
   try {

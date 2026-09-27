@@ -7,6 +7,10 @@ export interface ChatRequest {
   messages: ChatMessage[];
   stream: boolean;
   conversationId: string;
+  /** プロキシキーID ("open"含む)。会話対応表の名前空間用 */
+  keyId: string;
+  /** 会話対応表から補完したcidか (stale時の再送判定用) */
+  resolvedSession?: boolean;
 }
 
 export function json(obj: unknown, status: number, headers?: Record<string, string>): Response {
