@@ -504,6 +504,18 @@ function fakeEnabled(): boolean {
   return (process.env.TORITSU_FAKE_HISTORY ?? "1").trim() !== "0";
 }
 
+/** 呼出し再試行の上限 (TORITSU_CALL_RETRY、既定1=best-of-2)。0=無効 */
+function callRetryMax(): number {
+  const v = Number((process.env.TORITSU_CALL_RETRY ?? "1").trim());
+  if (!Number.isFinite(v) || v < 0) {
+    return 1;
+  }
+  return Math.min(2, Math.floor(v));
+}
+
+/** 前回が拒否テキストだった時の追い文 */
+const RETRY_SUFFIX = `Your previous reply contained no tool call. Reply now with exactly one JSON object and nothing else.`;
+
 /** 古いメッセージから削る（最新リクエストと直近結果を守る） */
 export function trimMessages(
   messages: ChatMessage[],
@@ -581,13 +593,21 @@ export async function handleAgentChat(
 
   // 強制文は行動要求シグナルがあるturnだけに付ける（挨拶の誤発火を避ける）
   // TORITSU_FORCE_MODE=always/never で上書き可
-  const r = await sendUpstream(req, `${input}${force}`);
+  // 呼出しturnでテキスト拒否が返ったら追い文で再送 (best-of-2。挨拶は対象外)
+  const maxRetry = !isToolResultTurn && force !== "" ? callRetryMax() : 0;
+  let r = await sendUpstream(req, `${input}${force}`);
+  debugRecord("agent_upstream_output", { text: r.text, cid: r.cid });
+  let parsed = parseAssistantOutput(r.text);
+  for (let i = 0; i < maxRetry && parsed.type !== "tool_calls"; i++) {
+    r = await sendUpstream(req, `${input}${force}\n\n${RETRY_SUFFIX}`);
+    debugRecord("agent_upstream_retry", { text: r.text, cid: r.cid });
+    parsed = parseAssistantOutput(r.text);
+  }
   debugRecord("agent_upstream_output", { text: r.text, cid: r.cid });
   recordSession(
     { keyId: req.keyId, model: req.model, messages: req.messages, tools },
     r.cid,
   );
-  const parsed = parseAssistantOutput(r.text);
   if (parsed.type === "tool_calls") {
     return toolCallsResponse(req, parsed.calls, r.cid, r.usage);
   }
