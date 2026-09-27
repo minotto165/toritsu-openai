@@ -65,8 +65,8 @@ function toolCallsResponse(
 /** 呼出しターンの末尾に付ける強制文（形式だけを足す。初回送信に含める） */
 const FORCE_SUFFIX = `Strict reminder: your reply must be exactly one JSON object with a non-empty "tool_calls" array. Any other output is a format violation.`;
 
-/** 強制文の付け方。auto=シグナルがある時だけ、always=常時、never=付けない */
-const FORCE_MODE = (process.env.TORITSU_FORCE_MODE ?? "auto").trim().toLowerCase();
+/** 強制文の付け方。always=常時、never=付けない、auto=シグナルがある時だけ */
+const FORCE_MODE = (process.env.TORITSU_FORCE_MODE ?? "always").trim().toLowerCase();
 
 /** 強制文を付けるか (ハンドラから使用) */
 export function shouldForce(query: string, recent: string[]): boolean {
@@ -577,9 +577,11 @@ export async function handleAgentChat(
   const preamble = `${built.body}${keptSystem !== "" ? `\n${keptSystem}` : ""}`;
   // 偽の成功形は呼出しturn+シグナル時のみ先頭に付ける。
   // 結果turn・挨拶には付けない (要約破壊と誤発火の実測があるため)
+  // ※force常時でも偽形はシグナル直結のまま (挨拶に偽形を付けないため)
   const force = shouldForce(rank.query, rank.recent) ? `\n\n${FORCE_SUFFIX}` : "";
+  const signal = needsForcing(rank.query, rank.recent);
   const fake =
-    fakeEnabled() && !isToolResultTurn && force !== "" ? fakeHistory(built.top) : [];
+    fakeEnabled() && !isToolResultTurn && signal ? fakeHistory(built.top) : [];
   // 継続ターンは最新1件のみ送る（上流が履歴を保持しているため）
   const selected = selectMessages(
     [...fake, ...req.messages.filter((m) => m.role !== "system")],
@@ -594,7 +596,8 @@ export async function handleAgentChat(
   // 強制文は行動要求シグナルがあるturnだけに付ける（挨拶の誤発火を避ける）
   // TORITSU_FORCE_MODE=always/never で上書き可
   // 呼出しturnでテキスト拒否が返ったら追い文で再送 (best-of-2。挨拶は対象外)
-  const maxRetry = !isToolResultTurn && force !== "" ? callRetryMax() : 0;
+  // ※force常時でも再送はシグナル直結のまま (挨拶の素直な返事を壊さないため)
+  const maxRetry = !isToolResultTurn && signal ? callRetryMax() : 0;
   let r = await sendUpstream(req, `${input}${force}`);
   debugRecord("agent_upstream_output", { text: r.text, cid: r.cid });
   let parsed = parseAssistantOutput(r.text);
