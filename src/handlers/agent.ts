@@ -520,7 +520,8 @@ export function buildAgentPreamble(
     tail.length +
     j1Request.length +
     stub.length +
-    keptSystem.length +
+    // ※J3は文書内でsystem配分を自前管理するため前段では食わせない
+    (useJ3 ? 0 : keptSystem.length) +
     EXTRA_MARGIN;
   const tier2Budget = Math.max(
     0,
