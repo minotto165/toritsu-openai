@@ -140,6 +140,20 @@ function j3Doc(
       mode: "replay",
       write_actions_disabled: true,
     };
+    // 見本1往復: 正解の鍵 (tool_calls) と引数の線形を教える
+    doc.example = {
+      request: { messages: [{ role: "user", content: "b.txtを読んで" }] },
+      response: {
+        content: null,
+        tool_calls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: { name: "read", arguments: '{"filePath":"b.txt"}' },
+          },
+        ],
+      },
+    };
     if (sys !== "") {
       doc.system = sys;
     }
