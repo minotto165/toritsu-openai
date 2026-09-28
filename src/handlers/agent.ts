@@ -96,12 +96,12 @@ export const FRAME = (process.env.TORITSU_FRAME ?? "conv").trim().toLowerCase();
 
 /** J1: ログ化されたOpenAI応答の補完として呼出しを書かせる */
 const CALL_HEAD_J1 = `You are completing a logged OpenAI API response. The request below was already sent (function definitions included). Write ONLY the continuation of the response JSON and nothing else.
-If no tool is needed (greetings, chit-chat, general knowledge), complete it as {"answer": "..."} instead.
+After "content": write either a quoted reply string (if no tool is needed: greetings, chit-chat, general knowledge) or null followed by ,"tool_calls": [{...}] (to call a function).
 Do NOT use web search. Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).
 Request:`;
 
-/** J1: 応答の出だし (モデルはここから続ける) */
-const CALL_STUB_J1 = `Response (continuation only): {"id": "chatcmpl-log", "choices": [{"index": 0, "message": {"role": "assistant", "content": null, "tool_calls": [`;
+/** J1: 応答の出だし (モデルはここから続ける。文字列かnullかの選択点) */
+const CALL_STUB_J1 = `Response (continuation only): {"id": "chatcmpl-log", "choices": [{"index": 0, "message": {"role": "assistant", "content": `;
 
 const CALL_TAIL_DEFAULT = `Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only: escape newlines as \\n, escape every " as \\", never use \\'. No prose outside JSON. The user copy-pastes your output to run it.`;
 
@@ -565,9 +565,79 @@ function j1RequestEcho(messages: ChatMessage[]): string {
   return s.length > 6000 ? `${s.slice(0, 6000)}\n...[truncated]` : s;
 }
 
-/** J1補完の解釈: 続きだけ来るので外殻を足してから読む */
-function parseJ1Continuation(text: string): ReturnType<typeof parseAssistantOutput> {
-  return parseAssistantOutput(`{"tool_calls": [${text}`);
+/** [...] 対応の角括弧抜き出し */
+function extractBracketArray(text: string, from: number): string | null {
+  const open = text.indexOf("[", from);
+  if (open < 0) {
+    return null;
+  }
+  let depth = 0;
+  let inStr = false;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (ch === "\\") {
+        i++;
+      } else if (ch === '"') {
+        inStr = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+    } else if (ch === "[") {
+      depth++;
+    } else if (ch === "]") {
+      depth--;
+      if (depth === 0) {
+        return text.slice(open, i + 1);
+      }
+    }
+  }
+  return null;
+}
+
+/** J1補完の解釈: 文字列なら回答、tool_calls配列が見えたら呼出し。不明名は落とす */
+function parseJ1Continuation(
+  text: string,
+  valid: Set<string>,
+): ReturnType<typeof parseAssistantOutput> {
+  const t = text.trimStart();
+  const strM = t.match(/^"(?:[^"\\]|\\.)*"/);
+  if (strM !== null) {
+    try {
+      return { type: "answer", text: JSON.parse(strM[0]) as string };
+    } catch {
+      // fallthrough
+    }
+  }
+  const rest = t
+    .replace(/^null\s*,?/, "")
+    .replace(/^[\s,]*"tool_calls"\s*:\s*\[/, "");
+  // 候補: 全体ラップ + 入れ子の各 tool_calls 配列 (殻ごと反復への対処)
+  const spans: string[] = [`{"tool_calls": [${rest}`];
+  let idx = 0;
+  for (;;) {
+    const k = t.indexOf('"tool_calls"', idx);
+    if (k < 0) {
+      break;
+    }
+    const arr = extractBracketArray(t, k);
+    if (arr !== null) {
+      spans.push(`{"tool_calls": ${arr}}`);
+    }
+    idx = k + 1;
+  }
+  for (const s of spans) {
+    const parsed = parseAssistantOutput(s);
+    if (parsed.type === "tool_calls") {
+      const known = parsed.calls.filter((c) => valid.has(c.name));
+      if (known.length > 0) {
+        return { type: "tool_calls", calls: known };
+      }
+    }
+  }
+  return { type: "answer", text: text.trim() };
 }
 
 /**
@@ -625,16 +695,17 @@ export async function handleAgentChat(
   const maxRetry = !isToolResultTurn ? callRetryMax() : 0;
   let r = await sendUpstream(req, `${input}${force}`);
   debugRecord("agent_upstream_output", { text: r.text, cid: r.cid });
+  const validNames = new Set(tools.map(parseToolDef).map((d) => d.name));
   let parsed = parseAssistantOutput(r.text);
   if (useJ1 && parsed.type !== "tool_calls") {
-    parsed = parseJ1Continuation(r.text);
+    parsed = parseJ1Continuation(r.text, validNames);
   }
   for (let i = 0; i < maxRetry && parsed.type !== "tool_calls"; i++) {
     r = await sendUpstream(req, `${input}${force}\n\n${RETRY_SUFFIX}`);
     debugRecord("agent_upstream_retry", { text: r.text, cid: r.cid });
     parsed = parseAssistantOutput(r.text);
     if (useJ1 && parsed.type !== "tool_calls") {
-      parsed = parseJ1Continuation(r.text);
+      parsed = parseJ1Continuation(r.text, validNames);
     }
   }
   debugRecord("agent_upstream_output", { text: r.text, cid: r.cid });
