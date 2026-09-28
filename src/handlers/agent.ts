@@ -116,6 +116,9 @@ function shortDesc(s: string): string {
   return s.slice(0, DESC_MAX);
 }
 
+/** J3のsystem上限文字数 (0=無制限。先頭を残す) */
+const SYS_MAX = Number.parseInt(process.env.TORITSU_J3_SYS_MAX ?? "8000", 10) || 0;
+
 /** J3文書の上限 (上流2万字制限の内側。超えたら関連の低い定義から落とす) */
 const J3_BUDGET = Number.parseInt(process.env.TORITSU_J3_BUDGET ?? "20000", 10) || 20000;
 
@@ -129,10 +132,11 @@ function j3Doc(
     description: shortDesc(d.desc),
     parameters: d.params,
   }));
+  const sys = SYS_MAX > 0 && system.length > SYS_MAX ? system.slice(0, SYS_MAX) : system;
   const mkHead = () => {
     const doc: Record<string, unknown> = {};
-    if (system !== "") {
-      doc.system = system;
+    if (sys !== "") {
+      doc.system = sys;
     }
     doc.request = {
       messages,
