@@ -142,14 +142,14 @@ function j3Doc(
     };
     // 見本1往復: 正解の鍵 (tool_calls) と引数の線形を教える
     doc.example = {
-      request: { messages: [{ role: "user", content: "b.txtを読んで" }] },
+      request: { messages: [{ role: "user", content: "sample.txtを読んで" }] },
       response: {
         content: null,
         tool_calls: [
           {
             id: "call_1",
             type: "function",
-            function: { name: "read", arguments: '{"filePath":"b.txt"}' },
+            function: { name: "read", arguments: '{"filePath":"sample.txt"}' },
           },
         ],
       },
