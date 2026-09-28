@@ -253,6 +253,7 @@ const JP_SYNONYMS: Array<[RegExp, string[]]> = [
   [/編集|直し|修正|書き換え/, ["edit", "patch", "update"]],
   [/確認|チェック|状態|調べ/, ["get", "check", "status", "show"]],
   [/送|通知|投稿/, ["send", "post", "notify"]],
+  [/要約|まとめ|概要|中身|一覧化/, ["read", "list", "glob"]],
 ];
 
 /** 日本語クエリから英語tool語彙を補う */
