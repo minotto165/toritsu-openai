@@ -91,6 +91,18 @@ Functions you may call (JSON schemas):`;
 
 const CALL_HEAD = envText("TORITSU_CALL_HEAD", CALL_HEAD_DEFAULT);
 
+/** 応答枠の切替。conv=変換器口調 (既定)、json=応答JSON補完 (J1実験) */
+export const FRAME = (process.env.TORITSU_FRAME ?? "conv").trim().toLowerCase();
+
+/** J1: ログ化されたOpenAI応答の補完として呼出しを書かせる */
+const CALL_HEAD_J1 = `You are completing a logged OpenAI API response. The request below was already sent (function definitions included). Write ONLY the continuation of the response JSON and nothing else.
+If no tool is needed (greetings, chit-chat, general knowledge), complete it as {"answer": "..."} instead.
+Do NOT use web search. Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).
+Request:`;
+
+/** J1: 応答の出だし (モデルはここから続ける) */
+const CALL_STUB_J1 = `Response (continuation only): {"id": "chatcmpl-log", "choices": [{"index": 0, "message": {"role": "assistant", "content": null, "tool_calls": [`;
+
 const CALL_TAIL_DEFAULT = `Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only: escape newlines as \\n, escape every " as \\", never use \\'. No prose outside JSON. The user copy-pastes your output to run it.`;
 
 const CALL_TAIL = envText("TORITSU_CALL_TAIL", CALL_TAIL_DEFAULT);
@@ -420,12 +432,22 @@ export function buildAgentPreamble(
   rank: RankContext,
   keptSystem: string,
   isResultTurn: boolean,
+  j1Request = "",
 ): PreambleBuild {
+  const useJ1 = FRAME === "json" && !isResultTurn;
   const defs = tools.map(parseToolDef);
   const tier1All = defs.map(nameOnlyLine).join("\n").length;
-  const head = isResultTurn ? RESULT_HEAD : CALL_HEAD;
+  const head = isResultTurn ? RESULT_HEAD : useJ1 ? CALL_HEAD_J1 : CALL_HEAD;
   const tail = isResultTurn ? RESULT_FALLBACK : CALL_TAIL;
-  const baseLen = agentIdentity().length + head.length + tail.length + keptSystem.length + EXTRA_MARGIN;
+  const stub = useJ1 ? `\n${CALL_STUB_J1}` : "";
+  const baseLen =
+    agentIdentity().length +
+    head.length +
+    tail.length +
+    j1Request.length +
+    stub.length +
+    keptSystem.length +
+    EXTRA_MARGIN;
   const tier2Budget = Math.max(
     0,
     INPUT_BUDGET - baseLen - tier1All - MSG_BUDGET - TAIL_RESERVE,
@@ -441,7 +463,9 @@ export function buildAgentPreamble(
       : "";
   const body = isResultTurn
     ? `${agentIdentity()}\n${RESULT_HEAD}\n${section.text}${example}\n${RESULT_FALLBACK}`
-    : `${agentIdentity()}\n${CALL_HEAD}\n${section.text}${example}\n${CALL_TAIL}`;
+    : useJ1
+      ? `${agentIdentity()}\n${CALL_HEAD_J1}\n${j1Request}\n${section.text}${example}\n${CALL_STUB_J1}`
+      : `${agentIdentity()}\n${CALL_HEAD}\n${section.text}${example}\n${CALL_TAIL}`;
   return { body, tier2Count: section.tier2Count, tier1Count: section.tier1Count, top: section.top };
 }
 
@@ -535,6 +559,17 @@ export function trimMessages(
   return { messages: [marker, ...messages.slice(keepFrom)], dropped };
 }
 
+/** J1用リクエストJSON (6000字cap)。送った履歴の見せ玉 */
+function j1RequestEcho(messages: ChatMessage[]): string {
+  const s = JSON.stringify(messages);
+  return s.length > 6000 ? `${s.slice(0, 6000)}\n...[truncated]` : s;
+}
+
+/** J1補完の解釈: 続きだけ来るので外殻を足してから読む */
+function parseJ1Continuation(text: string): ReturnType<typeof parseAssistantOutput> {
+  return parseAssistantOutput(`{"tool_calls": [${text}`);
+}
+
 /**
  * エージェントチャット：tools定義をテキスト指示に変換し、モデルが出した
  * tool_calls JSON をそのまま返す。呼出しが出なければ直接回答として返す。
@@ -561,7 +596,14 @@ export async function handleAgentChat(
   const keptSystem =
     keptRaw.length > KEPT_SYSTEM_CAP ? `${keptRaw.slice(0, KEPT_SYSTEM_CAP)}\n...[system truncated]` : keptRaw;
   const rank = rankContext(req.messages.filter((m) => m.role !== "system"));
-  const built = buildAgentPreamble(tools, rank, keptSystem, isToolResultTurn);
+  const useJ1 = FRAME === "json" && !isToolResultTurn;
+  const built = buildAgentPreamble(
+    tools,
+    rank,
+    keptSystem,
+    isToolResultTurn,
+    useJ1 ? j1RequestEcho(req.messages.filter((m) => m.role !== "system")) : "",
+  );
   // 機構部を先に置く（2層カタログは予算内で収まる設計）
   const preamble = `${built.body}${keptSystem !== "" ? `\n${keptSystem}` : ""}`;
   // 偽の成功形は呼出しturnに付ける (結果turnには付けない。要約破壊の実測があるため)
@@ -584,10 +626,16 @@ export async function handleAgentChat(
   let r = await sendUpstream(req, `${input}${force}`);
   debugRecord("agent_upstream_output", { text: r.text, cid: r.cid });
   let parsed = parseAssistantOutput(r.text);
+  if (useJ1 && parsed.type !== "tool_calls") {
+    parsed = parseJ1Continuation(r.text);
+  }
   for (let i = 0; i < maxRetry && parsed.type !== "tool_calls"; i++) {
     r = await sendUpstream(req, `${input}${force}\n\n${RETRY_SUFFIX}`);
     debugRecord("agent_upstream_retry", { text: r.text, cid: r.cid });
     parsed = parseAssistantOutput(r.text);
+    if (useJ1 && parsed.type !== "tool_calls") {
+      parsed = parseJ1Continuation(r.text);
+    }
   }
   debugRecord("agent_upstream_output", { text: r.text, cid: r.cid });
   recordSession(
