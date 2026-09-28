@@ -132,7 +132,7 @@ function j3Doc(
     description: shortDesc(d.desc),
     parameters: d.params,
   }));
-  const sys = SYS_MAX > 0 && system.length > SYS_MAX ? system.slice(0, SYS_MAX) : system;
+  let sys = SYS_MAX > 0 && system.length > SYS_MAX ? system.slice(0, SYS_MAX) : system;
   const mkHead = () => {
     const doc: Record<string, unknown> = {};
     if (sys !== "") {
@@ -146,8 +146,12 @@ function j3Doc(
     const head = JSON.stringify(doc);
     return head.endsWith("}") ? head.slice(0, -1) : head;
   };
-  // 関連の低い定義から落として予算内に収める (JSONは常に有効)
+  // 定義優先: まずsystemを削り (0まで)、足りなければ定義を落とす
   let head = mkHead();
+  while (head.length > J3_BUDGET && sys.length > 0) {
+    sys = sys.slice(0, Math.max(0, sys.length - 1000));
+    head = mkHead();
+  }
   while (head.length > J3_BUDGET && funcs.length > 1) {
     funcs.pop();
     head = mkHead();
