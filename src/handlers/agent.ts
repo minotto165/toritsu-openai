@@ -719,6 +719,27 @@ function parseJ1Continuation(
       }
     }
   }
+  // 旧式 function_call (単数) の受容: 名前+引数が正しければ呼出し扱い
+  const fc = /"function_call"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"[^}]*"arguments"\s*:\s*("(?:[^"\\]|\\.)*"|\{[^{}]*\})/.exec(
+    t,
+  );
+  if (fc && valid.has(fc[1])) {
+    let args = fc[2];
+    if (args.startsWith("{")) {
+      try {
+        args = JSON.stringify(JSON.parse(args));
+      } catch {
+        return { type: "answer", text: text.trim() };
+      }
+    } else {
+      try {
+        JSON.parse(args);
+      } catch {
+        return { type: "answer", text: text.trim() };
+      }
+    }
+    return { type: "tool_calls", calls: [{ id: "call_1", name: fc[1], args }] };
+  }
   return { type: "answer", text: text.trim() };
 }
 
