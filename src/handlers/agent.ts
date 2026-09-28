@@ -107,7 +107,7 @@ const CALL_STUB_J1 = `Response (continuation only): {"id": "chatcmpl-log", "choi
 const J3_LINE = `以下のJSONを補完してください。続きだけを書くこと。道具が要らない時は文字列で答えること。`;
 
 /** J3文書の上限 (上流2万字制限の内側。超えたら関連の低い定義から落とす) */
-const J3_BUDGET = Number.parseInt(process.env.TORITSU_J3_BUDGET ?? "17000", 10) || 17000;
+const J3_BUDGET = Number.parseInt(process.env.TORITSU_J3_BUDGET ?? "20000", 10) || 20000;
 
 function j3Doc(
   system: string,
@@ -751,8 +751,8 @@ export async function handleAgentChat(
   // 新規ターン（全履歴再送）は古い方から削り、最新リクエストとカタログを守る
   const { messages } = trimMessages(selected, MSG_BUDGET);
   const shrunk = shrinkInput(toToritsuInput(messages, preamble));
-  // ※J3は文書単体で完結させる (履歴行・system追記なし)
-  const input = useJ3 ? shrinkInput(preamble).text : shrunk.text;
+  // ※J3は文書単体で完結させる (履歴行・system追記なし。予算内収め済みなので切り詰めなし)
+  const input = useJ3 ? preamble : shrunk.text;
   debugRecord("agent_upstream_input", { input });
 
   // 強制文は呼出しturnに付ける (TORITSU_FORCE_MODE=never で無効化可)
