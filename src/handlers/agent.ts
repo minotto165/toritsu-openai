@@ -725,18 +725,16 @@ function parseJ1Continuation(
   );
   if (fc && valid.has(fc[1])) {
     let args = fc[2];
-    if (args.startsWith("{")) {
-      try {
-        args = JSON.stringify(JSON.parse(args));
-      } catch {
+    try {
+      const inner = JSON.parse(args);
+      // 文字列の中にJSONが入っている二重化を剥く
+      args = typeof inner === "string" ? inner : JSON.stringify(inner);
+      const check = JSON.parse(args);
+      if (typeof check !== "object" || check === null) {
         return { type: "answer", text: text.trim() };
       }
-    } else {
-      try {
-        JSON.parse(args);
-      } catch {
-        return { type: "answer", text: text.trim() };
-      }
+    } catch {
+      return { type: "answer", text: text.trim() };
     }
     return { type: "tool_calls", calls: [{ id: "call_1", name: fc[1], args }] };
   }
