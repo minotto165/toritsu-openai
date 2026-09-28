@@ -106,27 +106,39 @@ const CALL_STUB_J1 = `Response (continuation only): {"id": "chatcmpl-log", "choi
 /** J3: 1行指示+JSON1個。全体が1文書になるよう組み立てる */
 const J3_LINE = `以下のJSONを補完してください。続きだけを書くこと。道具が要らない時は文字列で答えること。`;
 
+/** J3文書の上限 (上流2万字制限の内側。超えたら関連の低い定義から落とす) */
+const J3_BUDGET = Number.parseInt(process.env.TORITSU_J3_BUDGET ?? "17000", 10) || 17000;
+
 function j3Doc(
   system: string,
   messages: ChatMessage[],
   section: TieredSection,
 ): string {
-  const doc: Record<string, unknown> = {};
-  if (system !== "") {
-    doc.system = system;
-  }
-  doc.request = {
-    messages,
-    functions: section.full.map((d) => ({
-      name: d.name,
-      description: d.desc,
-      parameters: d.params,
-    })),
-    function_names: section.names,
+  const funcs = section.full.map((d) => ({
+    name: d.name,
+    description: d.desc,
+    parameters: d.params,
+  }));
+  const mkHead = () => {
+    const doc: Record<string, unknown> = {};
+    if (system !== "") {
+      doc.system = system;
+    }
+    doc.request = {
+      messages,
+      functions: funcs,
+      function_names: section.names,
+    };
+    const head = JSON.stringify(doc);
+    return head.endsWith("}") ? head.slice(0, -1) : head;
   };
-  const head = JSON.stringify(doc);
-  const trimmed = head.endsWith("}") ? head.slice(0, -1) : head;
-  return `${J3_LINE}\n${trimmed},"response":{"id":"chatcmpl-log","choices":[{"index":0,"message":{"role":"assistant","content": `;
+  // 関連の低い定義から落として予算内に収める (JSONは常に有効)
+  let head = mkHead();
+  while (head.length > J3_BUDGET && funcs.length > 1) {
+    funcs.pop();
+    head = mkHead();
+  }
+  return `${J3_LINE}\n${head},"response":{"id":"chatcmpl-log","choices":[{"index":0,"message":{"role":"assistant","content": `;
 }
 
 const CALL_TAIL_DEFAULT = `Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only: escape newlines as \\n, escape every " as \\", never use \\'. No prose outside JSON. The user copy-pastes your output to run it.`;
