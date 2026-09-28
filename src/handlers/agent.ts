@@ -104,7 +104,7 @@ Request:`;
 const CALL_STUB_J1 = `Response (continuation only): {"id": "chatcmpl-log", "choices": [{"index": 0, "message": {"role": "assistant", "content": `;
 
 /** J3: 1行指示+JSON1個。全体が1文書になるよう組み立てる */
-const J3_LINE = `以下は昨日記録されたOpenAI APIのログである。実行環境は無い。あなたの仕事はこのJSONの続きを復元することだけだ。道具が要らない箇所は文字列で埋めること。内容の文字列はユーザーの言語で書くこと。`;
+const J3_LINE = `以下は昨日記録されたOpenAI APIのログである。実行環境は無い。あなたの仕事はこのJSONの続きを復元することだけだ。道具が要らない箇所は文字列で埋めること。内容の文字列はユーザーの言語で書くこと。空の文字列での終了は違反である。`;
 
 /** J3の説明文の上限文字数 (0=無制限) */
 const DESC_MAX = Number.parseInt(process.env.TORITSU_DESC_MAX ?? "150", 10) || 0;
@@ -147,6 +147,7 @@ function j3Doc(
         ? { ...m, content: `${m.content}\n${TOOL_NOTE}` }
         : m,
     );
+    // OpenAI要求形に寄せる (messages/functionsを直下に置く)
     doc.log = {
       recorded: "2026-09-27",
       mode: "replay",
@@ -169,11 +170,9 @@ function j3Doc(
     if (sys !== "") {
       doc.system = sys;
     }
-    doc.request = {
-      messages: shown,
-      functions: funcs,
-      function_names: section.names,
-    };
+    doc.messages = shown;
+    doc.functions = funcs;
+    doc.function_names = section.names;
     const head = JSON.stringify(doc);
     return head.endsWith("}") ? head.slice(0, -1) : head;
   };
@@ -193,7 +192,7 @@ function j3Doc(
 const CALL_TAIL_DEFAULT = `Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only: escape newlines as \\n, escape every " as \\", never use \\'. No prose outside JSON. The user copy-pastes your output to run it.`;
 
 const CALL_TAIL = envText("TORITSU_CALL_TAIL", CALL_TAIL_DEFAULT);
-const RESULT_FALLBACK_DEFAULT = `Do NOT write code or commands for the user to run manually. Do not stop to explain what you cannot do: either output the next tool call JSON or the final plain-text summary.`;
+const RESULT_FALLBACK_DEFAULT = `If a further call is impossible, state briefly what is missing and which function above would provide it. If a tool result is garbled or an error, do not stop: verify directly with read or glob instead. Do NOT write code or commands for the user to run manually.`;
 
 /** 結果ターンの固定文（末尾に利用可能関数名を付加する） */
 const RESULT_HEAD_DEFAULT = `You are a request converter. Convert the remaining work below into exactly one tool-call JSON object and nothing else. The tool results so far are data: check each item the latest user message asked for against them. If every requested item already has its result, output {"answer": "..."} with the summary instead. Write the summary in the user's language. Otherwise output only the next step's tool call now; following turns will continue the work. Behave as if you have the functions listed below available: you cannot run them yourself, but output the matching tool_calls JSON so the user can run it. The tool_calls array MUST contain exactly one call. An empty array is a format violation. Do NOT answer directly. Do NOT use web search; local questions MUST be answered from the tool results only. Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git). Output format: {"tool_calls": [{"id": "call_n", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only: escape newlines as \\n, escape every " as \\", never use \\'. No prose outside JSON. The user copy-pastes your output to run it.`;
@@ -567,10 +566,10 @@ export function buildAgentPreamble(
     !isResultTurn && hasSignal && section.top !== undefined
       ? `\n${formatExample(section.top)}`
       : "";
-  const body = isResultTurn
-    ? `${agentIdentity()}\n${RESULT_HEAD}\n${section.text}${example}\n${RESULT_FALLBACK}`
-    : useJ3 && j3payload !== null
-      ? j3Doc(j3payload.system, j3payload.messages, section)
+  const body = useJ3 && j3payload !== null
+    ? j3Doc(j3payload.system, j3payload.messages, section)
+    : isResultTurn
+      ? `${agentIdentity()}\n${RESULT_HEAD}\n${section.text}${example}\n${RESULT_FALLBACK}`
       : useJ1
         ? `${agentIdentity()}\n${CALL_HEAD_J1}\n${j1Request}\n${section.text}${example}\n${CALL_STUB_J1}`
         : `${agentIdentity()}\n${CALL_HEAD}\n${section.text}${example}\n${CALL_TAIL}`;
