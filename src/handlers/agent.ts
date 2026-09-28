@@ -106,6 +106,16 @@ const CALL_STUB_J1 = `Response (continuation only): {"id": "chatcmpl-log", "choi
 /** J3: 1行指示+JSON1個。全体が1文書になるよう組み立てる */
 const J3_LINE = `以下のJSONを補完してください。続きだけを書くこと。道具が要らない時は文字列で答えること。`;
 
+/** J3の説明文の上限文字数 (0=無制限) */
+const DESC_MAX = Number.parseInt(process.env.TORITSU_DESC_MAX ?? "150", 10) || 0;
+
+function shortDesc(s: string): string {
+  if (DESC_MAX <= 0 || s.length <= DESC_MAX) {
+    return s;
+  }
+  return s.slice(0, DESC_MAX);
+}
+
 /** J3文書の上限 (上流2万字制限の内側。超えたら関連の低い定義から落とす) */
 const J3_BUDGET = Number.parseInt(process.env.TORITSU_J3_BUDGET ?? "20000", 10) || 20000;
 
@@ -116,7 +126,7 @@ function j3Doc(
 ): string {
   const funcs = section.full.map((d) => ({
     name: d.name,
-    description: d.desc,
+    description: shortDesc(d.desc),
     parameters: d.params,
   }));
   const mkHead = () => {
