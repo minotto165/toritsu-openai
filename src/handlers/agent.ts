@@ -91,7 +91,7 @@ Functions you may call (JSON schemas):`;
 
 const CALL_HEAD = envText("TORITSU_CALL_HEAD", CALL_HEAD_DEFAULT);
 
-/** 応答枠の切替。conv=変換器口調 (既定)、json=応答JSON補完 (J1実験) */
+/** 応答枠の切替。conv=変換器口調 (既定)、json=J1補完、full=J3全体JSON */
 export const FRAME = (process.env.TORITSU_FRAME ?? "conv").trim().toLowerCase();
 
 /** J1: ログ化されたOpenAI応答の補完として呼出しを書かせる */
@@ -102,6 +102,32 @@ Request:`;
 
 /** J1: 応答の出だし (モデルはここから続ける。文字列かnullかの選択点) */
 const CALL_STUB_J1 = `Response (continuation only): {"id": "chatcmpl-log", "choices": [{"index": 0, "message": {"role": "assistant", "content": `;
+
+/** J3: 1行指示+JSON1個。全体が1文書になるよう組み立てる */
+const J3_LINE = `以下のJSONを補完してください。続きだけを書くこと。道具が要らない時は文字列で答えること。`;
+
+function j3Doc(
+  system: string,
+  messages: ChatMessage[],
+  section: TieredSection,
+): string {
+  const doc: Record<string, unknown> = {};
+  if (system !== "") {
+    doc.system = system;
+  }
+  doc.request = {
+    messages,
+    functions: section.full.map((d) => ({
+      name: d.name,
+      description: d.desc,
+      parameters: d.params,
+    })),
+    function_names: section.names,
+  };
+  const head = JSON.stringify(doc);
+  const trimmed = head.endsWith("}") ? head.slice(0, -1) : head;
+  return `${J3_LINE}\n${trimmed},"response":{"id":"chatcmpl-log","choices":[{"index":0,"message":{"role":"assistant","content": `;
+}
 
 const CALL_TAIL_DEFAULT = `Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only: escape newlines as \\n, escape every " as \\", never use \\'. No prose outside JSON. The user copy-pastes your output to run it.`;
 
@@ -364,6 +390,10 @@ export interface TieredSection {
   tier2Count: number;
   tier1Count: number;
   top: ToolDef | undefined;
+  /** 関連順のフル定義 (J3用) */
+  full: ToolDef[];
+  /** 全tool名 (クライアント順、J3用) */
+  names: string[];
 }
 
 /** フルスキーマ掲載の上限件数 (0=文字数予算のみ)。希釈対策 */
@@ -388,6 +418,7 @@ export function tieredToolSection(
     .map((d, i) => ({ d, i, s: scoreTool(d, qtokens, recent) }))
     .sort((a, b) => b.s - a.s || a.i - b.i);
   const fullLines: string[] = [];
+  const fullDefs: ToolDef[] = [];
   const rest: ToolDef[] = [];
   let used = 0;
   for (const { d } of ranked) {
@@ -397,6 +428,7 @@ export function tieredToolSection(
       (TIER2_MAX <= 0 || fullLines.length < TIER2_MAX)
     ) {
       fullLines.push(line);
+      fullDefs.push(d);
       used += line.length + 1;
     } else {
       rest.push(d);
@@ -407,8 +439,16 @@ export function tieredToolSection(
   const nameLines = defs.filter((d) => restSet.has(d)).map(nameOnlyLine);
   const head = fullLines.join("\n");
   const first = ranked.length > 0 ? (ranked[0] as { d: ToolDef }).d : undefined;
+  const allNames = defs.map((d) => d.name);
   if (nameLines.length === 0) {
-    return { text: head, tier2Count: fullLines.length, tier1Count: 0, top: first };
+    return {
+      text: head,
+      tier2Count: fullLines.length,
+      tier1Count: 0,
+      top: first,
+      full: fullDefs,
+      names: allNames,
+    };
   }
   const note = `Additional functions (compact args shown; you may call any function listed):`;
   return {
@@ -416,6 +456,8 @@ export function tieredToolSection(
     tier2Count: fullLines.length,
     tier1Count: nameLines.length,
     top: first,
+    full: fullDefs,
+    names: allNames,
   };
 }
 
@@ -433,8 +475,10 @@ export function buildAgentPreamble(
   keptSystem: string,
   isResultTurn: boolean,
   j1Request = "",
+  j3payload: { system: string; messages: ChatMessage[] } | null = null,
 ): PreambleBuild {
   const useJ1 = FRAME === "json" && !isResultTurn;
+  const useJ3 = FRAME === "full" && !isResultTurn && j3payload !== null;
   const defs = tools.map(parseToolDef);
   const tier1All = defs.map(nameOnlyLine).join("\n").length;
   const head = isResultTurn ? RESULT_HEAD : useJ1 ? CALL_HEAD_J1 : CALL_HEAD;
@@ -463,9 +507,11 @@ export function buildAgentPreamble(
       : "";
   const body = isResultTurn
     ? `${agentIdentity()}\n${RESULT_HEAD}\n${section.text}${example}\n${RESULT_FALLBACK}`
-    : useJ1
-      ? `${agentIdentity()}\n${CALL_HEAD_J1}\n${j1Request}\n${section.text}${example}\n${CALL_STUB_J1}`
-      : `${agentIdentity()}\n${CALL_HEAD}\n${section.text}${example}\n${CALL_TAIL}`;
+    : useJ3 && j3payload !== null
+      ? j3Doc(j3payload.system, j3payload.messages, section)
+      : useJ1
+        ? `${agentIdentity()}\n${CALL_HEAD_J1}\n${j1Request}\n${section.text}${example}\n${CALL_STUB_J1}`
+        : `${agentIdentity()}\n${CALL_HEAD}\n${section.text}${example}\n${CALL_TAIL}`;
   return { body, tier2Count: section.tier2Count, tier1Count: section.tier1Count, top: section.top };
 }
 
@@ -667,17 +713,23 @@ export async function handleAgentChat(
     keptRaw.length > KEPT_SYSTEM_CAP ? `${keptRaw.slice(0, KEPT_SYSTEM_CAP)}\n...[system truncated]` : keptRaw;
   const rank = rankContext(req.messages.filter((m) => m.role !== "system"));
   const useJ1 = FRAME === "json" && !isToolResultTurn;
+  const useJ3 = FRAME === "full" && !isToolResultTurn;
+  const useJson = useJ1 || useJ3;
+  const nonSystem = req.messages.filter((m) => m.role !== "system");
   const built = buildAgentPreamble(
     tools,
     rank,
     keptSystem,
     isToolResultTurn,
-    useJ1 ? j1RequestEcho(req.messages.filter((m) => m.role !== "system")) : "",
+    useJ1 ? j1RequestEcho(nonSystem) : "",
+    useJ3 ? { system: keptSystem, messages: nonSystem } : null,
   );
   // 機構部を先に置く（2層カタログは予算内で収まる設計）
-  const preamble = `${built.body}${keptSystem !== "" ? `\n${keptSystem}` : ""}`;
+  // ※J3は全体が1文書なのでsystem追記なし
+  const preamble = useJ3 ? built.body : `${built.body}${keptSystem !== "" ? `\n${keptSystem}` : ""}`;
   // 偽の成功形は呼出しturnに付ける (結果turnには付けない。要約破壊の実測があるため)
-  const force = shouldForce() ? `\n\n${FORCE_SUFFIX}` : "";
+  // ※J3は枠自体が指示を持つため強制文なし
+  const force = useJ3 ? "" : shouldForce() ? `\n\n${FORCE_SUFFIX}` : "";
   const fake = fakeEnabled() && !isToolResultTurn ? fakeHistory(built.top) : [];
   // 継続ターンは最新1件のみ送る（上流が履歴を保持しているため）
   const selected = selectMessages(
@@ -687,7 +739,8 @@ export async function handleAgentChat(
   // 新規ターン（全履歴再送）は古い方から削り、最新リクエストとカタログを守る
   const { messages } = trimMessages(selected, MSG_BUDGET);
   const shrunk = shrinkInput(toToritsuInput(messages, preamble));
-  const input = shrunk.text;
+  // ※J3は文書単体で完結させる (履歴行・system追記なし)
+  const input = useJ3 ? shrinkInput(preamble).text : shrunk.text;
   debugRecord("agent_upstream_input", { input });
 
   // 強制文は呼出しturnに付ける (TORITSU_FORCE_MODE=never で無効化可)
@@ -697,14 +750,14 @@ export async function handleAgentChat(
   debugRecord("agent_upstream_output", { text: r.text, cid: r.cid });
   const validNames = new Set(tools.map(parseToolDef).map((d) => d.name));
   let parsed = parseAssistantOutput(r.text);
-  if (useJ1 && parsed.type !== "tool_calls") {
+  if (useJson && parsed.type !== "tool_calls") {
     parsed = parseJ1Continuation(r.text, validNames);
   }
   for (let i = 0; i < maxRetry && parsed.type !== "tool_calls"; i++) {
     r = await sendUpstream(req, `${input}${force}\n\n${RETRY_SUFFIX}`);
     debugRecord("agent_upstream_retry", { text: r.text, cid: r.cid });
     parsed = parseAssistantOutput(r.text);
-    if (useJ1 && parsed.type !== "tool_calls") {
+    if (useJson && parsed.type !== "tool_calls") {
       parsed = parseJ1Continuation(r.text, validNames);
     }
   }
