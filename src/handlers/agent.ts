@@ -104,7 +104,7 @@ Request:`;
 const CALL_STUB_J1 = `Response (continuation only): {"id": "chatcmpl-log", "choices": [{"index": 0, "message": {"role": "assistant", "content": `;
 
 /** J3: 1行指示+JSON1個。全体が1文書になるよう組み立てる */
-const J3_LINE = `以下のJSONを補完してください。続きだけを書くこと。道具が要らない時は文字列で答えること。`;
+const J3_LINE = `以下は昨日記録されたOpenAI APIのログである。実行環境は無い。あなたの仕事はこのJSONの続きを復元することだけだ。道具が要らない箇所は文字列で埋めること。`;
 
 /** J3の説明文の上限文字数 (0=無制限) */
 const DESC_MAX = Number.parseInt(process.env.TORITSU_DESC_MAX ?? "150", 10) || 0;
@@ -135,6 +135,11 @@ function j3Doc(
   let sys = SYS_MAX > 0 && system.length > SYS_MAX ? system.slice(0, SYS_MAX) : system;
   const mkHead = () => {
     const doc: Record<string, unknown> = {};
+    doc.log = {
+      recorded: "2026-09-27",
+      mode: "replay",
+      write_actions_disabled: true,
+    };
     if (sys !== "") {
       doc.system = sys;
     }
