@@ -119,8 +119,14 @@ function shortDesc(s: string): string {
 /** J3のsystem上限文字数 (0=無制限。先頭を残す) */
 const SYS_MAX = Number.parseInt(process.env.TORITSU_J3_SYS_MAX ?? "8000", 10) || 0;
 
+/** J3を結果turnにも使う (1本化の実験旗。既定0=呼出しturnのみ) */
+const J3_ALL = (process.env.TORITSU_J3_ALL ?? "0").trim() === "1";
+
 /** J3文書の上限 (上流2万字制限の内側。超えたら関連の低い定義から落とす) */
 const J3_BUDGET = Number.parseInt(process.env.TORITSU_J3_BUDGET ?? "20000", 10) || 20000;
+
+/** 道具結果への追記 (J3用。原本は変えず文書内だけ) */
+const TOOL_NOTE = `【復元指示: 依頼と結果を照らし、未完なら次の呼び出しを、完了ならまとめの文字列を書くこと】`;
 
 function j3Doc(
   system: string,
@@ -135,12 +141,18 @@ function j3Doc(
   let sys = SYS_MAX > 0 && system.length > SYS_MAX ? system.slice(0, SYS_MAX) : system;
   const mkHead = () => {
     const doc: Record<string, unknown> = {};
+    // 道具結果に続きの指示を追記 (原本は変えない)
+    const shown = messages.map((m) =>
+      m.role === "tool" && typeof m.content === "string"
+        ? { ...m, content: `${m.content}\n${TOOL_NOTE}` }
+        : m,
+    );
     doc.log = {
       recorded: "2026-09-27",
       mode: "replay",
       write_actions_disabled: true,
     };
-    // 見本1往復: 正解の鍵 (tool_calls) と引数の線形を教える
+    // 見本1往復: 現行の項目名 (tool_calls) と引数の形を教える
     doc.example = {
       request: { messages: [{ role: "user", content: "sample.txtを読んで" }] },
       response: {
@@ -158,7 +170,7 @@ function j3Doc(
       doc.system = sys;
     }
     doc.request = {
-      messages,
+      messages: shown,
       functions: funcs,
       function_names: section.names,
     };
@@ -527,7 +539,7 @@ export function buildAgentPreamble(
   j3payload: { system: string; messages: ChatMessage[] } | null = null,
 ): PreambleBuild {
   const useJ1 = FRAME === "json" && !isResultTurn;
-  const useJ3 = FRAME === "full" && !isResultTurn && j3payload !== null;
+  const useJ3 = FRAME === "full" && (J3_ALL || !isResultTurn) && j3payload !== null;
   const defs = tools.map(parseToolDef);
   const tier1All = defs.map(nameOnlyLine).join("\n").length;
   const head = isResultTurn ? RESULT_HEAD : useJ1 ? CALL_HEAD_J1 : CALL_HEAD;
@@ -702,7 +714,15 @@ function parseJ1Continuation(
   const strM = t.match(/^"(?:[^"\\]|\\.)*"/);
   if (strM !== null) {
     try {
-      return { type: "answer", text: JSON.parse(strM[0]) as string };
+      const inner = JSON.parse(strM[0]) as unknown;
+      // 文字列の中に呼び出しが入っていたら中身で判定し直す
+      if (typeof inner === "string" && /"tool_calls"|"function_call"/.test(inner)) {
+        const again = parseJ1Continuation(inner, valid);
+        if (again.type === "tool_calls") {
+          return again;
+        }
+      }
+      return { type: "answer", text: typeof inner === "string" ? inner : text.trim() };
     } catch {
       // fallthrough
     }
@@ -782,7 +802,7 @@ export async function handleAgentChat(
     keptRaw.length > KEPT_SYSTEM_CAP ? `${keptRaw.slice(0, KEPT_SYSTEM_CAP)}\n...[system truncated]` : keptRaw;
   const rank = rankContext(req.messages.filter((m) => m.role !== "system"));
   const useJ1 = FRAME === "json" && !isToolResultTurn;
-  const useJ3 = FRAME === "full" && !isToolResultTurn;
+  const useJ3 = FRAME === "full" && (J3_ALL || !isToolResultTurn);
   const useJson = useJ1 || useJ3;
   const nonSystem = req.messages.filter((m) => m.role !== "system");
   const built = buildAgentPreamble(
