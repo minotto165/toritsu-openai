@@ -252,7 +252,21 @@ export function forgetSession(cid: string): void {
   }
 }
 
+/** 上流の message.content 上限超過 (422)。セッション蓄積が原因のため新規セッションで再送 */
+export function isContentLimitError(err: unknown): boolean {
+  return (
+    err instanceof UpstreamError && err.status === 422 && /message\.content/.test(err.message)
+  );
+}
+
 /** cid指定で上流が失効を返したか (フォールバック再送の判定用) */
 export function isStaleSessionError(err: unknown): boolean {
-  return err instanceof UpstreamError && (err.status === 401 || err.status === 404);
+  if (!(err instanceof UpstreamError)) {
+    return false;
+  }
+  if (err.status === 401 || err.status === 404) {
+    return true;
+  }
+  // 上流セッション蓄積で message.content が上限超過 (422)。捨てて全文再送で復帰
+  return err.status === 422 && /message\.content/.test(err.message);
 }

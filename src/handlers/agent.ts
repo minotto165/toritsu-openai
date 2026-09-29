@@ -3,7 +3,7 @@ import { getApiKey } from "../infra/config";
 import { json, toSSE, type ChatRequest } from "../infra/http";
 import { debugRecord } from "../infra/debug";
 import { sendUpstream, type SendResult } from "../upstream/sender";
-import { forgetSession, isStaleSessionError, recordSession } from "../infra/sessionmap";
+import { forgetSession, isContentLimitError, isStaleSessionError, recordSession } from "../infra/sessionmap";
 import {
   toToritsuInput,
   toChatCompletion,
@@ -868,7 +868,11 @@ export async function handleAgentChat(
     return await attempt();
   } catch (err) {
     // 対応表のcidが失効していたら捨てて全文で再送1回
-    if (req.resolvedSession === true && isStaleSessionError(err)) {
+    // 上流蓄積の上限超過 (422) は対応表の有無に関わらず新規セッションで再送
+    if (
+      (req.resolvedSession === true && isStaleSessionError(err)) ||
+      isContentLimitError(err)
+    ) {
       forgetSession(req.conversationId);
       req.conversationId = "";
       req.resolvedSession = false;
