@@ -873,10 +873,10 @@ export async function handleAgentChat(
       status: err instanceof UpstreamError ? err.status : null,
     });
     // 対応表のcidが失効していたら捨てて全文で再送1回
-    // 上流蓄積の上限超過 (422) は対応表の有無に関わらず新規セッションで再送
+    // 上流蓄積の上限超過 (422) の自動再送は観察のため停止中
     if (
-      (req.resolvedSession === true && isStaleSessionError(err)) ||
-      isContentLimitError(err)
+      (req.resolvedSession === true && isStaleSessionError(err)) // ||
+      // isContentLimitError(err)
     ) {
       forgetSession(req.conversationId);
       req.conversationId = "";
