@@ -705,32 +705,182 @@ function extractBracketArray(text: string, from: number): string | null {
   return null;
 }
 
-/** J1補完の解釈: 文字列なら回答、tool_calls配列が見えたら呼出し。不明名は落とす */
-function parseJ1Continuation(
+/** 釣り合い括弧 {} の抜き出し (殻ごと反復への対処) */
+function extractBalancedObject(text: string, from: number): string | null {
+  const open = text.indexOf("{", from);
+  if (open < 0) {
+    return null;
+  }
+  let depth = 0;
+  let inStr = false;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (ch === "\\") {
+        i++;
+      } else if (ch === '"') {
+        inStr = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+    } else if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        return text.slice(open, i + 1);
+      }
+    }
+  }
+  return null;
+}
+
+/** 呼出し1件の正規化 (OpenAI形・素形の両対応)。ダメなら null */
+function normJ1Call(
+  item: unknown,
+  valid: Set<string>,
+  id: string,
+): { id: string; name: string; args: string } | null {
+  const fn =
+    typeof item === "object" &&
+    item !== null &&
+    (item as { function?: unknown }).function !== undefined
+      ? (item as { function?: unknown }).function
+      : item;
+  if (typeof fn !== "object" || fn === null) {
+    return null;
+  }
+  const rec = fn as { name?: unknown; arguments?: unknown };
+  if (typeof rec.name !== "string" || !valid.has(rec.name)) {
+    return null;
+  }
+  let args = typeof rec.arguments === "string" ? rec.arguments : JSON.stringify(rec.arguments ?? {});
+  try {
+    const inner = JSON.parse(args);
+    // 文字列の中にJSONが入っている二重化を剥く
+    args = typeof inner === "string" ? inner : JSON.stringify(inner);
+    const check = JSON.parse(args);
+    if (typeof check !== "object" || check === null) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  return { id: typeof (item as { id?: unknown }).id === "string" ? ((item as { id: string }).id) : id, name: rec.name, args };
+}
+
+/** ノード解釈: 呼び出し優先、なければ回答、なければ null */
+function interpretJ1Node(
+  node: unknown,
+  valid: Set<string>,
+): ReturnType<typeof parseAssistantOutput> | null {
+  if (node === null || node === undefined) {
+    return null;
+  }
+  if (typeof node === "string") {
+    return node.trim() === "" ? null : { type: "answer", text: node };
+  }
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const r = interpretJ1Node(item, valid);
+      if (r !== null && r.type === "tool_calls") {
+        return r;
+      }
+    }
+    for (const item of node) {
+      const r = interpretJ1Node(item, valid);
+      if (r !== null) {
+        return r;
+      }
+    }
+    return null;
+  }
+  if (typeof node === "object") {
+    const o = node as Record<string, unknown>;
+    const subs: unknown[] = [];
+    for (const k of ["message", "response", "choice"]) {
+      if (o[k] !== undefined) {
+        subs.push(o[k]);
+      }
+    }
+    if (Array.isArray(o.choices)) {
+      subs.push(...o.choices);
+    }
+    for (const s of subs) {
+      const r = interpretJ1Node(s, valid);
+      if (r !== null && r.type === "tool_calls") {
+        return r;
+      }
+    }
+    if (Array.isArray(o.tool_calls)) {
+      const calls = o.tool_calls
+        .map((c, i) => normJ1Call(c, valid, `call_${i + 1}`))
+        .filter((c): c is { id: string; name: string; args: string } => c !== null);
+      if (calls.length > 0) {
+        return { type: "tool_calls", calls };
+      }
+    }
+    if (typeof o.function_call === "object" && o.function_call !== null) {
+      const c = normJ1Call(o.function_call, valid, "call_1");
+      if (c !== null) {
+        return { type: "tool_calls", calls: [c] };
+      }
+    }
+    for (const k of ["content", "answer", "text"]) {
+      if (typeof o[k] === "string" && (o[k] as string).trim() !== "") {
+        return { type: "answer", text: o[k] as string };
+      }
+    }
+    for (const s of subs) {
+      const r = interpretJ1Node(s, valid);
+      if (r !== null) {
+        return r;
+      }
+    }
+    return null;
+  }
+  return null;
+}
+/** J1/J3補完の解釈 (単体試験用に公開) */
+export function parseJ1Continuation(
   text: string,
   valid: Set<string>,
+  depth = 0,
 ): ReturnType<typeof parseAssistantOutput> {
   const t = text.trimStart();
+  // 1. 先頭文字列 (回答 or 包み直し)
   const strM = t.match(/^"(?:[^"\\]|\\.)*"/);
   if (strM !== null) {
     try {
       const inner = JSON.parse(strM[0]) as unknown;
-      // 文字列の中に呼び出しが入っていたら中身で判定し直す
-      if (typeof inner === "string" && /"tool_calls"|"function_call"/.test(inner)) {
-        const again = parseJ1Continuation(inner, valid);
-        if (again.type === "tool_calls") {
-          return again;
+      if (typeof inner === "string") {
+        // 包み直しの殻なら中身で判定し直す (深さ制限付き)
+        if (depth < 4 && /"tool_calls"|"function_call"|"role"|"content"|"answer"|"message"|"choices"/.test(inner)) {
+          const again = parseJ1Continuation(inner, valid, depth + 1);
+          if (again.type === "tool_calls") {
+            return again;
+          }
+          if (again.type === "answer" && again.text !== inner.trim()) {
+            return again;
+          }
         }
+        return { type: "answer", text: inner };
       }
-      return { type: "answer", text: typeof inner === "string" ? inner : text.trim() };
+      const r = interpretJ1Node(inner, valid);
+      if (r !== null) {
+        return r;
+      }
+      return { type: "answer", text: text.trim() };
     } catch {
       // fallthrough
     }
   }
+  // 2. tool_calls 配列の抜き出し (殻ごと反復への対処)
   const rest = t
     .replace(/^null\s*,?/, "")
     .replace(/^[\s,]*"tool_calls"\s*:\s*\[/, "");
-  // 候補: 全体ラップ + 入れ子の各 tool_calls 配列 (殻ごと反復への対処)
   const spans: string[] = [`{"tool_calls": [${rest}`];
   let idx = 0;
   for (;;) {
@@ -753,7 +903,50 @@ function parseJ1Continuation(
       }
     }
   }
-  // 旧式 function_call (単数) の受容: 名前+引数が正しければ呼出し扱い
+  // 3. 釣り合いオブジェクトの解釈 (assistant形・応答形などあらゆる殻)
+  const objs: unknown[] = [];
+  const first = extractBalancedObject(t, 0);
+  if (first !== null) {
+    try {
+      objs.push(JSON.parse(first));
+    } catch {
+      // fallthrough
+    }
+  }
+  for (const key of ['"message"', '"response"', '"choice"', '"content"']) {
+    let ki = 0;
+    for (;;) {
+      const k = t.indexOf(key, ki);
+      if (k < 0) {
+        break;
+      }
+      const colon = t.indexOf(":", k + key.length);
+      if (colon >= 0) {
+        const obj = extractBalancedObject(t, colon + 1);
+        if (obj !== null) {
+          try {
+            objs.push(JSON.parse(obj));
+          } catch {
+            // fallthrough
+          }
+        }
+      }
+      ki = k + 1;
+    }
+  }
+  for (const o of objs) {
+    const r = interpretJ1Node(o, valid);
+    if (r !== null && r.type === "tool_calls") {
+      return r;
+    }
+  }
+  for (const o of objs) {
+    const r = interpretJ1Node(o, valid);
+    if (r !== null) {
+      return r;
+    }
+  }
+  // 4. 旧式 function_call (単数) の受容: 名前+引数が正しければ呼出し扱い
   const fc = /"function_call"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"[^}]*"arguments"\s*:\s*("(?:[^"\\]|\\.)*"|\{[^{}]*\})/.exec(
     t,
   );
