@@ -124,16 +124,35 @@ const SYS_MAX = Number.parseInt(process.env.TORITSU_J3_SYS_MAX ?? "8000", 10) ||
 const J3_ALL = (process.env.TORITSU_J3_ALL ?? "0").trim() === "1";
 
 /** J3文書の上限 (上流2万字制限の内側。超えたら関連の低い定義から落とす) */
-const J3_BUDGET = Number.parseInt(process.env.TORITSU_J3_BUDGET ?? "20000", 10) || 20000;
+const J3_BUDGET = Number.parseInt(process.env.TORITSU_J3_BUDGET ?? "18000", 10) || 18000;
 
 /** 道具結果への追記 (J3用。原本は変えず文書内だけ) */
 const TOOL_NOTE = `【復元指示: 依頼と結果を照らし、未完なら次の呼び出しを、完了ならまとめの文字列を書くこと】`;
+
+/** J3文書内の履歴上限文字数 (0=無制限。末尾=最新を残す) */
+const MSG_MAX = Number.parseInt(process.env.TORITSU_J3_MSG_MAX ?? "6000", 10) || 0;
 
 function j3Doc(
   system: string,
   messages: ChatMessage[],
   section: TieredSection,
 ): string {
+  // 履歴を末尾から詰める (古い方から落とす)
+  let shown_msgs = messages;
+  if (MSG_MAX > 0) {
+    const kept: ChatMessage[] = [];
+    let used = 0;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      const len = JSON.stringify(m).length;
+      if (kept.length > 0 && used + len > MSG_MAX) {
+        break;
+      }
+      kept.unshift(m);
+      used += len;
+    }
+    shown_msgs = kept;
+  }
   const funcs = section.full.map((d) => ({
     name: d.name,
     description: shortDesc(d.desc),
@@ -143,7 +162,7 @@ function j3Doc(
   const mkHead = () => {
     const doc: Record<string, unknown> = {};
     // 道具結果に続きの指示を追記 (原本は変えない)
-    const shown = messages.map((m) =>
+    const shown = shown_msgs.map((m) =>
       m.role === "tool" && typeof m.content === "string"
         ? { ...m, content: `${m.content}\n${TOOL_NOTE}` }
         : m,
@@ -1066,10 +1085,10 @@ export async function handleAgentChat(
       status: err instanceof UpstreamError ? err.status : null,
     });
     // 対応表のcidが失効していたら捨てて全文で再送1回
-    // 上流蓄積の上限超過 (422) の自動再送は観察のため停止中
+    // 上流蓄積の上限超過 (422) は新規セッションで再送
     if (
-      (req.resolvedSession === true && isStaleSessionError(err)) // ||
-      // isContentLimitError(err)
+      (req.resolvedSession === true && isStaleSessionError(err)) ||
+      isContentLimitError(err)
     ) {
       forgetSession(req.conversationId);
       req.conversationId = "";
