@@ -135,7 +135,7 @@ export async function autoLogin(): Promise<boolean> {
   try {
     browser = await chromium.launch({
       channel: "chrome",
-      headless: false,
+      headless: process.env.TORITSU_HEADLESS === "1" ? true : false,
     });
   } catch (err) {
     logger.warn(`Chromeを起動できませんでした: ${err}`);
