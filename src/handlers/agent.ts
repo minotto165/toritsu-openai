@@ -137,15 +137,43 @@ function j3Doc(
   messages: ChatMessage[],
   section: TieredSection,
 ): string {
-  // 履歴を末尾から詰める (古い方から落とす)
+  const funcs = section.full.map((d) => ({
+    name: d.name,
+    description: shortDesc(d.desc),
+    parameters: d.params,
+  }));
+  let sys = SYS_MAX > 0 && system.length > SYS_MAX ? system.slice(0, SYS_MAX) : system;
+  // 履歴を末尾から詰める (古い方から落とす。上限は固定値と予算残の小さい方)
+  const fixedOverhead =
+    J3_LINE.length +
+    1 +
+    JSON.stringify({
+      log: { recorded: "2026-09-27", mode: "replay", write_actions_disabled: true },
+      example: {
+        request: { messages: [{ role: "user", content: "sample.txtを読んで" }] },
+        response: {
+          content: null,
+          tool_calls: [
+            { id: "call_1", type: "function", function: { name: "read", arguments: '{"filePath":"sample.txt"}' } },
+          ],
+        },
+      },
+      system: sys,
+      functions: funcs,
+      function_names: section.names,
+    }).length + 120;
+  const msgAllow =
+    MSG_MAX > 0
+      ? Math.min(MSG_MAX, Math.max(0, J3_BUDGET - fixedOverhead - 500))
+      : Math.max(0, J3_BUDGET - fixedOverhead - 500);
   let shown_msgs = messages;
-  if (MSG_MAX > 0) {
+  {
     const kept: ChatMessage[] = [];
     let used = 0;
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i];
       const len = JSON.stringify(m).length;
-      if (kept.length > 0 && used + len > MSG_MAX) {
+      if (kept.length > 0 && used + len > msgAllow) {
         break;
       }
       kept.unshift(m);
@@ -153,12 +181,6 @@ function j3Doc(
     }
     shown_msgs = kept;
   }
-  const funcs = section.full.map((d) => ({
-    name: d.name,
-    description: shortDesc(d.desc),
-    parameters: d.params,
-  }));
-  let sys = SYS_MAX > 0 && system.length > SYS_MAX ? system.slice(0, SYS_MAX) : system;
   const mkHead = () => {
     const doc: Record<string, unknown> = {};
     // 道具結果に続きの指示を追記 (原本は変えない)
