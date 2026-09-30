@@ -81,6 +81,12 @@ export async function sendWebuiMessage(opts: {
   form.append("is_stream", "0");
   form.append("model", opts.model);
   form.append("tool_choice", "0");
+  debugRecord("agent_upstream_wire", {
+    content_chars: opts.input.length,
+    content_bytes: Buffer.byteLength(opts.input, "utf8"),
+    hid: opts.hid !== "" ? opts.hid.slice(0, 8) : "",
+    model: opts.model,
+  });
   let res: Response;
   try {
     res = await fetch(WEBUI_API_URL, {
