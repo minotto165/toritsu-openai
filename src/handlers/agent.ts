@@ -124,13 +124,13 @@ const SYS_MAX = Number.parseInt(process.env.TORITSU_J3_SYS_MAX ?? "8000", 10) ||
 const J3_ALL = (process.env.TORITSU_J3_ALL ?? "0").trim() === "1";
 
 /** J3文書の上限 (上流2万字制限の内側。超えたら関連の低い定義から落とす) */
-const J3_BUDGET = Number.parseInt(process.env.TORITSU_J3_BUDGET ?? "18000", 10) || 18000;
+const J3_BUDGET = Number.parseInt(process.env.TORITSU_J3_BUDGET ?? "20000", 10) || 20000;
 
 /** 道具結果への追記 (J3用。原本は変えず文書内だけ) */
 const TOOL_NOTE = `【復元指示: 依頼と結果を照らし、未完なら次の呼び出しを、完了ならまとめの文字列を書くこと】`;
 
 /** J3文書内の履歴上限文字数 (0=無制限。末尾=最新を残す) */
-const MSG_MAX = Number.parseInt(process.env.TORITSU_J3_MSG_MAX ?? "6000", 10) || 0;
+const MSG_MAX = Number.parseInt(process.env.TORITSU_J3_MSG_MAX ?? "8000", 10) || 0;
 
 function j3Doc(
   system: string,
