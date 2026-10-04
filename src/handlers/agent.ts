@@ -71,7 +71,7 @@ const SYS_MAX = numEnv(["TORITSU_SYSTEM_MAX", "TORITSU_J3_SYS_MAX"], 8000);
 const J3_BUDGET = numEnv(["TORITSU_DOC_BUDGET", "TORITSU_J3_BUDGET"], 20000);
 
 /** 道具結果への追記 (J3用。原本は変えず文書内だけ) */
-const TOOL_NOTE = `【復元指示: 依頼と結果を照らし、未完なら次の呼び出しを、完了ならまとめの文字列を書くこと】`;
+const TOOL_NOTE = `【復元指示: 依頼と結果を照らし、未完なら次の呼び出しを、完了ならまとめの文字列を書くこと。情報不足や曖昧さが残るうちはまとめるな。次の1件の呼び出しを出せ】`;
 
 /** 文書内の履歴上限文字数 (0=無制限。末尾=最新を残す) */
 const MSG_MAX = numEnv(["TORITSU_HISTORY_MAX", "TORITSU_J3_MSG_MAX"], 8000);
