@@ -3,8 +3,8 @@ import { getApiKey } from "../infra/config";
 import { json, toSSE, type ChatRequest } from "../infra/http";
 import { debugRecord } from "../infra/debug";
 import { sendUpstream, type SendResult } from "../upstream/sender";
-import { UpstreamError } from "../infra/http";
-import { forgetSession, isContentLimitError, isStaleSessionError, recordSession } from "../infra/sessionmap";
+import { recordSession } from "../infra/sessionmap";
+import { withSessionRetry } from "../infra/session_retry";
 import {
   toToritsuInput,
   toChatCompletion,
@@ -1066,21 +1066,19 @@ export async function handleAgentChat(
   // 偽の成功形は呼出しturnに付ける (結果turnには付けない。要約破壊の実測があるため)
   // ※J3は枠自体が指示を持つため強制文なし
   const force = useJ3 ? "" : shouldForce() ? `\n\n${FORCE_SUFFIX}` : "";
-  const fake = fakeEnabled() && !isToolResultTurn ? fakeHistory(built.top) : [];
-  // 非J3経路: 偽形＋差分 (nonSystemは上で差分済み)
+  const fake = !useJ3 && fakeEnabled() && !isToolResultTurn ? fakeHistory(built.top) : [];
+  // 非J3経路のみ刈る (J3は文書内で予算収め済み。nonSystemは上で差分済み)
   const selected = [...fake, ...nonSystem];
-  // 新規ターン（全履歴再送）は古い方から削り、最新リクエストとカタログを守る
-  const { messages } = trimMessages(selected, MSG_BUDGET);
-  const shrunk = shrinkInput(toToritsuInput(messages, preamble));
   // ※J3は文書単体で完結させる (履歴行・system追記なし。予算内収め済みなので切り詰めなし)
-  const input = useJ3 ? preamble : shrunk.text;
+  const input = useJ3
+    ? preamble
+    : shrinkInput(toToritsuInput(trimMessages(selected, MSG_BUDGET).messages, preamble)).text;
   debugRecord("agent_upstream_input", { input });
 
   // 強制文は呼出しturnに付ける (TORITSU_FORCE_MODE=never で無効化可)
   // 呼出しturnでテキスト拒否が返ったら追い文で再送 (best-of-2)
   const maxRetry = !isToolResultTurn ? callRetryMax() : 0;
   let r = await sendUpstream(req, `${input}${force}`);
-  debugRecord("agent_upstream_output", { text: r.text, cid: r.cid });
   const validNames = new Set(tools.map(parseToolDef).map((d) => d.name));
   let parsed = parseAssistantOutput(r.text);
   if (useJson && parsed.type !== "tool_calls") {
@@ -1109,24 +1107,5 @@ export async function handleAgentChat(
   completion.usage = r.usage;
   return req.stream ? toSSE(completion) : json(completion, 200);
   };
-  try {
-    return await attempt();
-  } catch (err) {
-    debugRecord("agent_upstream_error", {
-      message: err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300),
-      status: err instanceof UpstreamError ? err.status : null,
-    });
-    // 対応表のcidが失効していたら捨てて全文で再送1回
-    // 上流蓄積の上限超過 (422) は新規セッションで再送
-    if (
-      (req.resolvedSession === true && isStaleSessionError(err)) ||
-      isContentLimitError(err)
-    ) {
-      forgetSession(req.conversationId);
-      req.conversationId = "";
-      req.resolvedSession = false;
-      return await attempt();
-    }
-    throw err;
-  }
+  return withSessionRetry(req, attempt);
 }

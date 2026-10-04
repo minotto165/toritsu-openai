@@ -204,7 +204,7 @@ export function resolveSessionDelta(s: SessionScope): { cid: string; sent: numbe
     return null;
   }
   best.updatedAt = now;
-  saveStore();
+  // 照合ヒットでは保存しない (毎リクエストの書き込み回避。record/forget時に永続化)
   return { cid: best.cid, sent: best.chain.length };
 }
 
