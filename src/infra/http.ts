@@ -11,6 +11,8 @@ export interface ChatRequest {
   keyId: string;
   /** 会話対応表から補完したcidか (stale時の再送判定用) */
   resolvedSession?: boolean;
+  /** 対応表上で送信済みの先頭件数 (継続ターンの差分送信に使用) */
+  sentCount?: number;
 }
 
 export function json(obj: unknown, status: number, headers?: Record<string, string>): Response {

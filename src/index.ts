@@ -9,7 +9,7 @@ import { debugRecord } from "./infra/debug";
 import { logger } from "./infra/logger";
 import { logRequest } from "./infra/request_log";
 import { proxyAuthEnabled, identifyProxyKey } from "./gateway/keys";
-import { resolveSession } from "./infra/sessionmap";
+import { resolveSessionDelta } from "./infra/sessionmap";
 import type { ChatMessage } from "./text/translate";
 
 if (process.argv.includes("--login")) {
@@ -143,11 +143,12 @@ app.post("/v1/chat/completions", async (c) => {
   };
   // クライアントがcidを送らない場合、会話対応表で続きを照合する (REUSE=1時のみ)
   if (req.conversationId === "") {
-    const hit = resolveSession({ keyId: req.keyId, model, messages: req.messages, tools });
+    const hit = resolveSessionDelta({ keyId: req.keyId, model, messages: req.messages, tools });
     if (hit !== null) {
-      req.conversationId = hit;
+      req.conversationId = hit.cid;
       req.resolvedSession = true;
-      debugRecord("session_resolve", { hit: true, keyId: keyLabel, model });
+      req.sentCount = hit.sent;
+      debugRecord("session_resolve", { hit: true, keyId: keyLabel, model, sent: hit.sent });
     }
   }
   debugRecord("client_request", {

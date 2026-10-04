@@ -10,7 +10,7 @@ import { forgetSession, isContentLimitError, isStaleSessionError, recordSession 
 /** 畳んで送信しOpenAI形式で返す */
 export async function handleChat(req: ChatRequest): Promise<Response> {
   const attempt = async (): Promise<Response> => {
-    const input = toToritsuInput(selectMessages(req.messages, req.conversationId));
+    const input = toToritsuInput(selectMessages(req.messages, req.conversationId, req.sentCount ?? 0));
     const r = await sendUpstream(req, input);
     recordSession(
       { keyId: req.keyId, model: req.model, messages: req.messages, tools: [] },

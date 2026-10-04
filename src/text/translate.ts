@@ -40,21 +40,18 @@ function capToolText(s: string): string {
   return `${s.slice(0, TOOL_CONTENT_CAP)}\n...[truncated ${s.length - TOOL_CONTENT_CAP} chars]`;
 }
 
-/** 送信対象の選択：新規は全件、継続はsystem＋最新1件（上流が履歴保持のため） */
-export function selectMessages(messages: ChatMessage[], conversationId: string): ChatMessage[] {
-  if (conversationId === "") {
+/** 送信対象の選択：新規は全件、継続は未送信の差分のみ（上流が履歴保持のため） */
+export function selectMessages(
+  messages: ChatMessage[],
+  conversationId: string,
+  sentCount = 0,
+): ChatMessage[] {
+  if (conversationId === "" || sentCount <= 0) {
     return messages;
   }
-  const systems = messages.filter((m) => m.role === "system");
-  const rest = messages.filter((m) => m.role !== "system");
-  if (rest.length === 0) {
-    return messages;
-  }
-  const last = rest[rest.length - 1];
-  if (last === undefined) {
-    return messages;
-  }
-  return [...systems, last];
+  const delta = messages.slice(sentCount);
+  // 空になる異常時は全件で安全側に倒す
+  return delta.length > 0 ? delta : messages;
 }
 
 /** messages[] を input 文字列1本に畳む（system文頭化・tool行化） */

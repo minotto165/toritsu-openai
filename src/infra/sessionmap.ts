@@ -99,7 +99,8 @@ function buildChain(messages: ChatMessage[]): string[] {
     return v;
   };
   const chain: string[] = [];
-  let prev = "";
+  // v2: 差分送信時代の鎖。旧版 (未送信を含む鎖) とは一致させない
+  let prev = "v2";
   for (const m of messages) {
     prev = sha(`${prev}\n${stable(normOne(m, canon))}`);
     chain.push(prev);
@@ -164,8 +165,8 @@ function saveStore(): void {
   }
 }
 
-/** 履歴の続きに一致するcidを探す。なければnull */
-export function resolveSession(s: SessionScope): string | null {
+/** 履歴の続きに一致するcidと送信済み件数を探す。なければnull */
+export function resolveSessionDelta(s: SessionScope): { cid: string; sent: number } | null {
   if (!SESSION_REUSE || s.messages.length === 0) {
     return null;
   }
@@ -204,7 +205,7 @@ export function resolveSession(s: SessionScope): string | null {
   }
   best.updatedAt = now;
   saveStore();
-  return best.cid;
+  return { cid: best.cid, sent: best.chain.length };
 }
 
 /** 応答cidと今回履歴を対応付けて保存・更新 */

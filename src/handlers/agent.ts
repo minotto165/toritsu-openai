@@ -170,6 +170,7 @@ function j3Doc(
   {
     const kept: ChatMessage[] = [];
     let used = 0;
+    let oldest = messages.length;
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i];
       const len = JSON.stringify(m).length;
@@ -178,6 +179,16 @@ function j3Doc(
       }
       kept.unshift(m);
       used += len;
+      oldest = i;
+    }
+    // 端数は1つ古い文を切って埋める (20000に張り付ける)
+    const rest = msgAllow - used;
+    if (rest > 200 && oldest > 0) {
+      const m = messages[oldest - 1];
+      if (m !== undefined && typeof m.content === "string" && m.content.length > rest) {
+        const cut = m.content.slice(0, Math.max(0, rest - 60));
+        kept.unshift({ ...m, content: `${cut}\n...[truncated]` });
+      }
     }
     shown_msgs = kept;
   }
@@ -1038,7 +1049,9 @@ export async function handleAgentChat(
   const useJ1 = FRAME === "json" && !isToolResultTurn;
   const useJ3 = FRAME === "full" && (J3_ALL || !isToolResultTurn);
   const useJson = useJ1 || useJ3;
-  const nonSystem = req.messages.filter((m) => m.role !== "system");
+  // 継続ターンは未送信の差分だけ送る (新規は全件)。鎖v2で送信済みまで一致を見る
+  const scoped = selectMessages(req.messages, req.conversationId, req.sentCount ?? 0);
+  const nonSystem = scoped.filter((m) => m.role !== "system");
   const built = buildAgentPreamble(
     tools,
     rank,
@@ -1054,11 +1067,8 @@ export async function handleAgentChat(
   // ※J3は枠自体が指示を持つため強制文なし
   const force = useJ3 ? "" : shouldForce() ? `\n\n${FORCE_SUFFIX}` : "";
   const fake = fakeEnabled() && !isToolResultTurn ? fakeHistory(built.top) : [];
-  // 継続ターンは最新1件のみ送る（上流が履歴を保持しているため）
-  const selected = selectMessages(
-    [...fake, ...req.messages.filter((m) => m.role !== "system")],
-    req.conversationId,
-  );
+  // 非J3経路: 偽形＋差分 (nonSystemは上で差分済み)
+  const selected = [...fake, ...nonSystem];
   // 新規ターン（全履歴再送）は古い方から削り、最新リクエストとカタログを守る
   const { messages } = trimMessages(selected, MSG_BUDGET);
   const shrunk = shrinkInput(toToritsuInput(messages, preamble));
