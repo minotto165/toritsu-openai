@@ -43,8 +43,19 @@ function toolCallsResponse(
 /** J3: 1行指示+JSON1個。全体が1文書になるよう組み立てる */
 const J3_LINE = `以下は昨日記録されたOpenAI APIのログである。実行環境は無い。あなたの仕事はこのJSONの続きを復元することだけだ。道具が要らない箇所は文字列で埋めること。内容の文字列はユーザーの言語で書くこと。空の文字列での終了は違反である。`;
 
-/** J3の説明文の上限文字数 (0=無制限) */
-const DESC_MAX = Number.parseInt(process.env.TORITSU_DESC_MAX ?? "150", 10) || 0;
+/** 数値env (新名→旧名の順で見る。旧名は互換用) */
+function numEnv(names: string[], def: number): number {
+  for (const n of names) {
+    const v = Number.parseInt(process.env[n] ?? "", 10);
+    if (Number.isFinite(v) && v >= 0) {
+      return v;
+    }
+  }
+  return def;
+}
+
+/** 道具説明の上限文字数 (0=無制限) */
+const DESC_MAX = numEnv(["TORITSU_TOOL_DESC_MAX", "TORITSU_DESC_MAX"], 150);
 
 function shortDesc(s: string): string {
   if (DESC_MAX <= 0 || s.length <= DESC_MAX) {
@@ -53,17 +64,17 @@ function shortDesc(s: string): string {
   return s.slice(0, DESC_MAX);
 }
 
-/** J3のsystem上限文字数 (0=無制限。先頭を残す) */
-const SYS_MAX = Number.parseInt(process.env.TORITSU_J3_SYS_MAX ?? "8000", 10) || 0;
+/** system上限文字数 (0=無制限。先頭を残す) */
+const SYS_MAX = numEnv(["TORITSU_SYSTEM_MAX", "TORITSU_J3_SYS_MAX"], 8000);
 
-/** J3文書の上限 (上流2万字制限の内側。超えたら関連の低い定義から落とす) */
-const J3_BUDGET = Number.parseInt(process.env.TORITSU_J3_BUDGET ?? "20000", 10) || 20000;
+/** 文書全体の上限 (上流2万字制限の内側。超えたら関連の低い定義から落とす) */
+const J3_BUDGET = numEnv(["TORITSU_DOC_BUDGET", "TORITSU_J3_BUDGET"], 20000);
 
 /** 道具結果への追記 (J3用。原本は変えず文書内だけ) */
 const TOOL_NOTE = `【復元指示: 依頼と結果を照らし、未完なら次の呼び出しを、完了ならまとめの文字列を書くこと】`;
 
-/** J3文書内の履歴上限文字数 (0=無制限。末尾=最新を残す) */
-const MSG_MAX = Number.parseInt(process.env.TORITSU_J3_MSG_MAX ?? "8000", 10) || 0;
+/** 文書内の履歴上限文字数 (0=無制限。末尾=最新を残す) */
+const MSG_MAX = numEnv(["TORITSU_HISTORY_MAX", "TORITSU_J3_MSG_MAX"], 8000);
 
 function j3Doc(
   system: string,
