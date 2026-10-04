@@ -86,6 +86,7 @@ function j3Doc(
     description: shortDesc(d.desc),
     parameters: d.params,
   }));
+  const sysOrigLen = system.length;
   let sys = SYS_MAX > 0 && system.length > SYS_MAX ? system.slice(0, SYS_MAX) : system;
   // 履歴を末尾から詰める (古い方から落とす。上限は固定値と予算残の小さい方)
   const fixedOverhead =
@@ -125,13 +126,36 @@ function j3Doc(
       used += len;
       oldest = i;
     }
-    // 端数は1つ古い文を切って埋める (20000に張り付ける)
+    // 端数は1つ古い文を切って埋める (20000に張り付ける。前後を残す中抜き)
     const rest = msgAllow - used;
     if (rest > 200 && oldest > 0) {
       const m = messages[oldest - 1];
       if (m !== undefined && typeof m.content === "string" && m.content.length > rest) {
-        const cut = m.content.slice(0, Math.max(0, rest - 60));
-        kept.unshift({ ...m, content: `${cut}\n...[truncated]` });
+        const keep = Math.max(0, rest - 80);
+        const hlen = Math.ceil(keep / 2);
+        const tlen = keep - hlen;
+        kept.unshift({
+          ...m,
+          content:
+            `${m.content.slice(0, hlen)}\n...[omitted ${m.content.length - keep} chars of this message for budget]...\n` +
+            m.content.slice(m.content.length - tlen),
+        });
+      }
+    }
+    // 最新1件だけで枠超過→中抜き (巨大readで会話が壊れっぱなしになるのを防ぐ)
+    if (used > msgAllow && kept.length > 0) {
+      const last = kept[kept.length - 1];
+      if (last !== undefined && typeof last.content === "string") {
+        const over = used - msgAllow;
+        const keep = Math.max(0, last.content.length - over - 80);
+        const hlen = Math.ceil(keep / 2);
+        const tlen = keep - hlen;
+        kept[kept.length - 1] = {
+          ...last,
+          content:
+            `${last.content.slice(0, hlen)}\n...[omitted ${over} chars of this message for budget]...\n` +
+            last.content.slice(last.content.length - tlen),
+        };
       }
     }
     shown_msgs = kept;
@@ -170,6 +194,13 @@ function j3Doc(
     doc.messages = shown;
     doc.functions = funcs;
     doc.function_names = section.names;
+    // 削り落としの明示 (無いのでなく省略、と分かるよう)
+    if (sysOrigLen > 0 && sys.length < sysOrigLen) {
+      doc.system_note = `system shortened ${sysOrigLen} to ${sys.length} chars for budget`;
+    }
+    if (funcs.length < section.full.length) {
+      doc.functions_note = `${section.full.length - funcs.length} schemas omitted for budget; all names in function_names`;
+    }
     const head = JSON.stringify(doc);
     return head.endsWith("}") ? head.slice(0, -1) : head;
   };
