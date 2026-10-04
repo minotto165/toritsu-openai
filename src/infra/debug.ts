@@ -66,7 +66,6 @@ function collectSecrets(): string[] {
   push(process.env.TORITSU_API_KEY);
   push(process.env.TORITSU_SESSION);
   push(process.env.TORITSU_MS_PASSWORD);
-  push(process.env.TORITSU_ADMIN_KEY);
   push(getApiKey());
   push(readSessionFile());
   for (const e of activeProxyKeys()) {

@@ -6,37 +6,14 @@ import { sendUpstream, type SendResult } from "../upstream/sender";
 import { recordSession } from "../infra/sessionmap";
 import { withSessionRetry } from "../infra/session_retry";
 import {
-  toToritsuInput,
   toChatCompletion,
   parseAssistantOutput,
   selectMessages,
   type ChatMessage,
 } from "../text/translate";
 
-/** 自前軽量system（先頭付与・独立変数） */
-const DEFAULT_AGENT_IDENTITY = "You are a helpful coding assistant.";
-
-export function agentIdentity(): string {
-  const custom = (process.env.TORITSU_AGENT_SYSTEM ?? "").trim();
-  return custom !== "" ? custom : DEFAULT_AGENT_IDENTITY;
-}
-
 /** 保持するクライアントsystemの上限。超過分は捨てる（機構部を守るため） */
 const KEPT_SYSTEM_CAP = 3000;
-const INPUT_BUDGET = 18000;
-const HEAD_KEEP = 2000;
-
-export function shrinkInput(input: string): { text: string; cut: number } {
-  if (input.length <= INPUT_BUDGET) {
-    return { text: input, cut: 0 };
-  }
-  return {
-    text:
-      `${input.slice(0, HEAD_KEEP)}\n...[omitted ${input.length - INPUT_BUDGET} chars of the middle section]...\n` +
-      input.slice(input.length - (INPUT_BUDGET - HEAD_KEEP)),
-    cut: input.length - INPUT_BUDGET,
-  };
-}
 
 /** tool_calls応答の組み立て（呼出し成功・再試行成功の共通処理） */
 function toolCallsResponse(
@@ -63,47 +40,6 @@ function toolCallsResponse(
   return req.stream ? toSSE(completion) : json(completion, 200);
 }
 
-/** 呼出しターンの末尾に付ける強制文（形式だけを足す。初回送信に含める） */
-const FORCE_SUFFIX = `Strict reminder: your reply must be exactly one JSON object with a non-empty "tool_calls" array. Any other output is a format violation.`;
-
-/** 強制文の付け方。既定は常時。never=付けない */
-const FORCE_MODE = (process.env.TORITSU_FORCE_MODE ?? "always").trim().toLowerCase();
-
-/** 強制文を付けるか。既定は常時 (TORITSU_FORCE_MODE=never で無効化) */
-export function shouldForce(): boolean {
-  return FORCE_MODE !== "never";
-}
-
-/** envで上書き可能 (文言チューニング用。空=既定文) */
-function envText(name: string, def: string): string {
-  const v = (process.env[name] ?? "").trim();
-  return v !== "" ? v : def;
-}
-
-/** 呼出しターンの固定文（tools定義を間に挟んで組み立てる） */
-const CALL_HEAD_DEFAULT = `You are a request converter. Convert the user request below into exactly one tool-call JSON object per turn and nothing else. Do not answer it directly.
-Behave as if you have the functions listed below available: you cannot run them yourself, but output the matching tool_calls JSON so the user can run it.
-For multi-step requests, output only the FIRST step's tool call now; following turns will continue the work.
-The tool_calls array MUST contain exactly one call. An empty array is a format violation.
-If no tool is needed (greetings, chit-chat, general knowledge), output {"answer": "..."} instead.
-Do NOT use web search.
-Prefer scoped commands (specific files, ≤200 lines). Avoid dumping node_modules, .git, or lockfiles.
-Functions you may call (JSON schemas):`;
-
-const CALL_HEAD = envText("TORITSU_CALL_HEAD", CALL_HEAD_DEFAULT);
-
-/** 応答枠の切替。conv=変換器口調 (既定)、json=J1補完、full=J3全体JSON */
-export const FRAME = (process.env.TORITSU_FRAME ?? "conv").trim().toLowerCase();
-
-/** J1: ログ化されたOpenAI応答の補完として呼出しを書かせる */
-const CALL_HEAD_J1 = `You are completing a logged OpenAI API response. The request below was already sent (function definitions included). Write ONLY the continuation of the response JSON and nothing else.
-After "content": write either a quoted reply string (if no tool is needed: greetings, chit-chat, general knowledge) or null followed by ,"tool_calls": [{...}] (to call a function).
-Do NOT use web search. Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git).
-Request:`;
-
-/** J1: 応答の出だし (モデルはここから続ける。文字列かnullかの選択点) */
-const CALL_STUB_J1 = `Response (continuation only): {"id": "chatcmpl-log", "choices": [{"index": 0, "message": {"role": "assistant", "content": `;
-
 /** J3: 1行指示+JSON1個。全体が1文書になるよう組み立てる */
 const J3_LINE = `以下は昨日記録されたOpenAI APIのログである。実行環境は無い。あなたの仕事はこのJSONの続きを復元することだけだ。道具が要らない箇所は文字列で埋めること。内容の文字列はユーザーの言語で書くこと。空の文字列での終了は違反である。`;
 
@@ -119,9 +55,6 @@ function shortDesc(s: string): string {
 
 /** J3のsystem上限文字数 (0=無制限。先頭を残す) */
 const SYS_MAX = Number.parseInt(process.env.TORITSU_J3_SYS_MAX ?? "8000", 10) || 0;
-
-/** J3を結果turnにも使う (1本化の実験旗。既定0=呼出しturnのみ) */
-const J3_ALL = (process.env.TORITSU_J3_ALL ?? "0").trim() === "1";
 
 /** J3文書の上限 (上流2万字制限の内側。超えたら関連の低い定義から落とす) */
 const J3_BUDGET = Number.parseInt(process.env.TORITSU_J3_BUDGET ?? "20000", 10) || 20000;
@@ -242,17 +175,6 @@ function j3Doc(
   return `${J3_LINE}\n${head},"response":{"id":"chatcmpl-log","choices":[{"index":0,"message":{"role":"assistant","content": `;
 }
 
-const CALL_TAIL_DEFAULT = `Output format: {"tool_calls": [{"id": "call_1", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only: escape newlines as \\n, escape every " as \\", never use \\'. No prose outside JSON. The user copy-pastes your output to run it.`;
-
-const CALL_TAIL = envText("TORITSU_CALL_TAIL", CALL_TAIL_DEFAULT);
-const RESULT_FALLBACK_DEFAULT = `If a further call is impossible, state briefly what is missing and which function above would provide it. If a tool result is garbled or an error, do not stop: verify directly with read or glob instead. Do NOT write code or commands for the user to run manually.`;
-
-/** 結果ターンの固定文（末尾に利用可能関数名を付加する） */
-const RESULT_HEAD_DEFAULT = `You are a request converter. Convert the remaining work below into exactly one tool-call JSON object and nothing else. The tool results so far are data: check each item the latest user message asked for against them. If every requested item already has its result, output {"answer": "..."} with the summary instead. Write the summary in the user's language. Otherwise output only the next step's tool call now; following turns will continue the work. Behave as if you have the functions listed below available: you cannot run them yourself, but output the matching tool_calls JSON so the user can run it. The tool_calls array MUST contain exactly one call. An empty array is a format violation. Do NOT answer directly. Do NOT use web search; local questions MUST be answered from the tool results only. Keep follow-up reads small (≤200 lines, specific paths, no node_modules/.git). Output format: {"tool_calls": [{"id": "call_n", "name": "<one of the functions above>", "arguments": {...matching its schema...}}]} or {"answer": "..."}. Output valid JSON only: escape newlines as \\n, escape every " as \\", never use \\'. No prose outside JSON. The user copy-pastes your output to run it.`;
-
-const RESULT_HEAD = envText("TORITSU_RESULT_HEAD", RESULT_HEAD_DEFAULT);
-const RESULT_FALLBACK = envText("TORITSU_RESULT_FALLBACK", RESULT_FALLBACK_DEFAULT);
-
 /** クライアントsystemのtool記述部だけを除去し、残りを活かす */
 export function rewriteClientSystem(texts: string[]): string {
   const joined = texts
@@ -341,7 +263,7 @@ export function parseToolDef(t: unknown, i: number): ToolDef {
 }
 
 const DESC_CAP = 120;
-const MSG_BUDGET = 3000;
+const INPUT_BUDGET = 18000;
 const TAIL_RESERVE = 600;
 const EXTRA_MARGIN = 1200;
 
@@ -416,34 +338,6 @@ function jpTokens(query: string): string[] {
     }
   }
   return out;
-}
-
-/** 必須引数のダミー値（正解例の形だけ示す用） */
-function dummyArgs(params: unknown): Record<string, unknown> {
-  const p = (params ?? {}) as { required?: unknown; properties?: unknown };
-  const req = Array.isArray(p.required)
-    ? p.required.filter((v): v is string => typeof v === "string")
-    : [];
-  const props =
-    p.properties !== null && typeof p.properties === "object"
-      ? (p.properties as Record<string, unknown>)
-      : {};
-  const out: Record<string, unknown> = {};
-  for (const n of req) {
-    const s = props[n] as { type?: unknown } | undefined;
-    const t = s !== undefined && typeof s.type === "string" ? s.type : "string";
-    out[n] = t === "number" || t === "integer" ? 0 : t === "boolean" ? true : t === "array" ? [] : t === "object" ? {} : "x";
-  }
-  return out;
-}
-
-/** 関連首位toolの正解例1件（形だけ見せる。値はダミー） */
-function formatExample(d: ToolDef): string {
-  const want = d.desc !== "" ? d.desc.slice(0, 100) : `use ${d.name}`;
-  const envelope = {
-    tool_calls: [{ id: "call_1", name: d.name, arguments: JSON.stringify(dummyArgs(d.params)) }],
-  };
-  return `Example (output shape only):\nRequest: ${want}\nOutput: ${JSON.stringify(envelope)}`;
 }
 
 export interface RankContext {
@@ -578,105 +472,22 @@ export interface PreambleBuild {
   body: string;
   tier2Count: number;
   tier1Count: number;
-  top: ToolDef | undefined;
 }
 
-/** 機構＋2層カタログを予算内で組み立てる */
+/** J3文書を予算内で組み立てる */
 export function buildAgentPreamble(
   tools: unknown[],
   rank: RankContext,
-  keptSystem: string,
-  isResultTurn: boolean,
-  j1Request = "",
-  j3payload: { system: string; messages: ChatMessage[] } | null = null,
+  j3payload: { system: string; messages: ChatMessage[] },
 ): PreambleBuild {
-  const useJ1 = FRAME === "json" && !isResultTurn;
-  const useJ3 = FRAME === "full" && (J3_ALL || !isResultTurn) && j3payload !== null;
   const defs = tools.map(parseToolDef);
   const tier1All = defs.map(nameOnlyLine).join("\n").length;
-  const head = isResultTurn ? RESULT_HEAD : useJ1 ? CALL_HEAD_J1 : CALL_HEAD;
-  const tail = isResultTurn ? RESULT_FALLBACK : CALL_TAIL;
-  const stub = useJ1 ? `\n${CALL_STUB_J1}` : "";
-  const baseLen =
-    agentIdentity().length +
-    head.length +
-    tail.length +
-    j1Request.length +
-    stub.length +
-    // ※J3は文書内でsystem配分を自前管理するため前段では食わせない
-    (useJ3 ? 0 : keptSystem.length) +
-    EXTRA_MARGIN;
-  const tier2Budget = Math.max(
-    0,
-    INPUT_BUDGET - baseLen - tier1All - MSG_BUDGET - TAIL_RESERVE,
-  );
+  const baseLen = J3_LINE.length + EXTRA_MARGIN;
+  const tier2Budget = Math.max(0, INPUT_BUDGET - baseLen - tier1All - TAIL_RESERVE);
   const section = tieredToolSection(tools, rank, tier2Budget);
-  // 呼出しターンのみ関連首位の正解例を1件添える（形の学習用）。
-  // シグナルなし（英語語彙も履歴もゼロ）の時は付けない。無関係な例がノイズになるため
-  // ※結果turnへの正解例はsummary破壊が実測されたため付けない
-  const hasSignal = rank.recent.length > 0 || tokens(rank.query).length > 0;
-  const example =
-    !isResultTurn && hasSignal && section.top !== undefined
-      ? `\n${formatExample(section.top)}`
-      : "";
-  const body = useJ3 && j3payload !== null
-    ? j3Doc(j3payload.system, j3payload.messages, section)
-    : isResultTurn
-      ? `${agentIdentity()}\n${RESULT_HEAD}\n${section.text}${example}\n${RESULT_FALLBACK}`
-      : useJ1
-        ? `${agentIdentity()}\n${CALL_HEAD_J1}\n${j1Request}\n${section.text}${example}\n${CALL_STUB_J1}`
-        : `${agentIdentity()}\n${CALL_HEAD}\n${section.text}${example}\n${CALL_TAIL}`;
-  return { body, tier2Count: section.tier2Count, tier1Count: section.tier1Count, top: section.top };
+  const body = j3Doc(j3payload.system, j3payload.messages, section);
+  return { body, tier2Count: section.tier2Count, tier1Count: section.tier1Count };
 }
-
-/** tools定義→指示文（2層カタログ版） */
-export function agentToolPreamble(
-  tools: unknown[],
-  rank: RankContext = { query: "", recent: [] },
-  tier2Budget = 10000,
-): string {
-  const section = tieredToolSection(tools, rank, tier2Budget);
-  return `${agentIdentity()}\n${CALL_HEAD}\n${section.text}\n${CALL_TAIL}`;
-}
-
-/** 結果ターン用指示（2層カタログ版） */
-export function agentResultPreamble(
-  tools: unknown[] = [],
-  rank: RankContext = { query: "", recent: [] },
-  tier2Budget = 10000,
-): string {
-  const section = tieredToolSection(tools, rank, tier2Budget);
-  return `${agentIdentity()}\n${RESULT_HEAD}\n${section.text}\n${RESULT_FALLBACK}`;
-}
-
-/** 偽の成功形 (thin): 関連首位toolの呼出し1件を履歴の形で見せる。
- *  tool結果は付けない (偽の環境事実を作らないため) */
-function fakeHistory(top: ToolDef | undefined): ChatMessage[] {
-  if (top === undefined) {
-    return [];
-  }
-  const want = top.desc !== "" ? top.desc.slice(0, 100) : `use ${top.name}`;
-  return [
-    { role: "user", content: `Request: ${want}` },
-    {
-      role: "assistant",
-      content: "",
-      tool_calls: [
-        {
-          id: "cf1",
-          type: "function",
-          function: { name: top.name, arguments: JSON.stringify(dummyArgs(top.params)) },
-        },
-      ],
-    },
-  ];
-}
-
-/** 偽形を付けるか。TORITSU_FAKE_HISTORY=0 で無効 (既定は有効) */
-function fakeEnabled(): boolean {
-  return (process.env.TORITSU_FAKE_HISTORY ?? "1").trim() !== "0";
-}
-
 /** 呼出し再試行の上限 (TORITSU_CALL_RETRY、既定1=best-of-2)。0=無効 */
 function callRetryMax(): number {
   const v = Number((process.env.TORITSU_CALL_RETRY ?? "1").trim());
@@ -688,42 +499,6 @@ function callRetryMax(): number {
 
 /** 前回が拒否テキストだった時の追い文 */
 const RETRY_SUFFIX = `Your previous reply contained no tool call. Reply now with exactly one JSON object and nothing else.`;
-
-/** 古いメッセージから削る（最新リクエストと直近結果を守る） */
-export function trimMessages(
-  messages: ChatMessage[],
-  budget: number,
-): { messages: ChatMessage[]; dropped: number } {
-  const sizes = messages.map((m) => {
-    const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-    return m.role.length + c.length + 32;
-  });
-  let used = 0;
-  let keepFrom = messages.length;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const s = sizes[i] as number;
-    if (used + s > budget && keepFrom < messages.length) {
-      break;
-    }
-    used += s;
-    keepFrom = i;
-  }
-  const dropped = keepFrom;
-  if (dropped === 0) {
-    return { messages, dropped: 0 };
-  }
-  const marker: ChatMessage = {
-    role: "user",
-    content: `...[${dropped} older messages omitted]...`,
-  };
-  return { messages: [marker, ...messages.slice(keepFrom)], dropped };
-}
-
-/** J1用リクエストJSON (6000字cap)。送った履歴の見せ玉 */
-function j1RequestEcho(messages: ChatMessage[]): string {
-  const s = JSON.stringify(messages);
-  return s.length > 6000 ? `${s.slice(0, 6000)}\n...[truncated]` : s;
-}
 
 /** [...] 対応の角括弧抜き出し */
 function extractBracketArray(text: string, from: number): string | null {
@@ -1046,49 +821,26 @@ export async function handleAgentChat(
   const keptSystem =
     keptRaw.length > KEPT_SYSTEM_CAP ? `${keptRaw.slice(0, KEPT_SYSTEM_CAP)}\n...[system truncated]` : keptRaw;
   const rank = rankContext(req.messages.filter((m) => m.role !== "system"));
-  const useJ1 = FRAME === "json" && !isToolResultTurn;
-  const useJ3 = FRAME === "full" && (J3_ALL || !isToolResultTurn);
-  const useJson = useJ1 || useJ3;
   // 継続ターンは未送信の差分だけ送る (新規は全件)。鎖v2で送信済みまで一致を見る
   const scoped = selectMessages(req.messages, req.conversationId, req.sentCount ?? 0);
   const nonSystem = scoped.filter((m) => m.role !== "system");
-  const built = buildAgentPreamble(
-    tools,
-    rank,
-    keptSystem,
-    isToolResultTurn,
-    useJ1 ? j1RequestEcho(nonSystem) : "",
-    useJ3 ? { system: keptSystem, messages: nonSystem } : null,
-  );
-  // 機構部を先に置く（2層カタログは予算内で収まる設計）
-  // ※J3は全体が1文書なのでsystem追記なし
-  const preamble = useJ3 ? built.body : `${built.body}${keptSystem !== "" ? `\n${keptSystem}` : ""}`;
-  // 偽の成功形は呼出しturnに付ける (結果turnには付けない。要約破壊の実測があるため)
-  // ※J3は枠自体が指示を持つため強制文なし
-  const force = useJ3 ? "" : shouldForce() ? `\n\n${FORCE_SUFFIX}` : "";
-  const fake = !useJ3 && fakeEnabled() && !isToolResultTurn ? fakeHistory(built.top) : [];
-  // 非J3経路のみ刈る (J3は文書内で予算収め済み。nonSystemは上で差分済み)
-  const selected = [...fake, ...nonSystem];
-  // ※J3は文書単体で完結させる (履歴行・system追記なし。予算内収め済みなので切り詰めなし)
-  const input = useJ3
-    ? preamble
-    : shrinkInput(toToritsuInput(trimMessages(selected, MSG_BUDGET).messages, preamble)).text;
+  const built = buildAgentPreamble(tools, rank, { system: keptSystem, messages: nonSystem });
+  const input = built.body;
   debugRecord("agent_upstream_input", { input });
 
-  // 強制文は呼出しturnに付ける (TORITSU_FORCE_MODE=never で無効化可)
   // 呼出しturnでテキスト拒否が返ったら追い文で再送 (best-of-2)
   const maxRetry = !isToolResultTurn ? callRetryMax() : 0;
-  let r = await sendUpstream(req, `${input}${force}`);
+  let r = await sendUpstream(req, input);
   const validNames = new Set(tools.map(parseToolDef).map((d) => d.name));
   let parsed = parseAssistantOutput(r.text);
-  if (useJson && parsed.type !== "tool_calls") {
+  if (parsed.type !== "tool_calls") {
     parsed = parseJ1Continuation(r.text, validNames);
   }
   for (let i = 0; i < maxRetry && parsed.type !== "tool_calls"; i++) {
-    r = await sendUpstream(req, `${input}${force}\n\n${RETRY_SUFFIX}`);
+    r = await sendUpstream(req, `${input}\n\n${RETRY_SUFFIX}`);
     debugRecord("agent_upstream_retry", { text: r.text, cid: r.cid });
     parsed = parseAssistantOutput(r.text);
-    if (useJson && parsed.type !== "tool_calls") {
+    if (parsed.type !== "tool_calls") {
       parsed = parseJ1Continuation(r.text, validNames);
     }
   }
