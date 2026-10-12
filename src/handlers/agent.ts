@@ -834,7 +834,77 @@ export function parseJ1Continuation(
     }
     return { type: "tool_calls", calls: [{ id: "call_1", name: fc[1], args }] };
   }
+  // 5. 外枠破損時の最終手段: function塊から名前と引数だけ抜く (括弧入れ替え・迷子引用符への対処)
+  const bare = extractBareCall(t, valid);
+  if (bare !== null) {
+    return bare;
+  }
   return { type: "answer", text: text.trim() };
+}
+
+/** 外枠が壊れてもfunction塊から名前と引数だけ抜く (外枠parse不要) */
+function extractBareCall(
+  text: string,
+  valid: Set<string>,
+): ReturnType<typeof parseAssistantOutput> | null {
+  if (!text.includes('"function"')) {
+    return null;
+  }
+  const fk = text.indexOf('"function"');
+  const colon = text.indexOf(":", fk + 10);
+  if (colon < 0) {
+    return null;
+  }
+  const open = text.indexOf("{", colon);
+  if (open < 0) {
+    return null;
+  }
+  const blk = text.slice(open, open + 20000);
+  const nm = /"name"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(blk);
+  if (nm === null || !valid.has(nm[1])) {
+    return null;
+  }
+  const ak = blk.indexOf('"arguments"');
+  if (ak < 0) {
+    return null;
+  }
+  const ac = blk.indexOf(":", ak + 11);
+  if (ac < 0) {
+    return null;
+  }
+  let p = ac + 1;
+  while (blk[p] === " " || blk[p] === "\n" || blk[p] === "\t") {
+    p++;
+  }
+  let args: string;
+  if (blk[p] === '"') {
+    let j = p + 1;
+    let raw = "";
+    while (j < blk.length) {
+      const ch = blk[j];
+      if (ch === "\\") {
+        raw += ch + blk[j + 1];
+        j += 2;
+        continue;
+      }
+      if (ch === '"') {
+        break;
+      }
+      raw += ch;
+      j++;
+    }
+    try {
+      args = JSON.parse(`"${raw}"`) as string;
+    } catch {
+      args = raw;
+    }
+  } else {
+    const obj = extractBalancedObject(blk, p);
+    args = obj ?? "{}";
+  }
+  const idm = /"id"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(text.slice(Math.max(0, fk - 200), fk));
+  const id = idm !== null ? idm[1] : "call_bare";
+  return { type: "tool_calls", calls: [{ id, name: nm[1], args }] };
 }
 
 /**
